@@ -25,6 +25,8 @@ xgboost = "^2.0.3"
 lightgbm = "^4.3.0"
 plotly = "^5.19.0"
 altair = "^5.2.0"
+loguru = "^0.7.2"
+pyyaml = "^6.0.1"
 
 
 [build-system]
