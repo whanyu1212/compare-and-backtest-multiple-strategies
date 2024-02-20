@@ -12,6 +12,8 @@ class FinancialDataExtractor:
         symbol: str,
         start: str,
         end: str,
+        amount: float,
+        transaction_cost: float,
         interval: str = "1d",
         max_retries: int = 3,
         delay: int = 1,
@@ -40,6 +42,8 @@ class FinancialDataExtractor:
         self.symbol = symbol
         self.start = start
         self.end = end
+        self.amount = amount
+        self.transaction_cost = transaction_cost
         self.interval = interval
         self.data = self.get_data()
 
