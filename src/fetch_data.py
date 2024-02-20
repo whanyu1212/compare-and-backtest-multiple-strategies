@@ -1,9 +1,9 @@
 import yfinance as yf
 import pandas as pd
-import numpy as np
+import time
 from loguru import logger
 from datetime import datetime, timedelta
-from src.util.utility_functions import parse_cfg
+from util.utility_functions import parse_cfg
 
 
 class FinancialDataExtractor:
@@ -45,10 +45,26 @@ class FinancialDataExtractor:
         self.amount = amount
         self.transaction_cost = transaction_cost
         self.interval = interval
+        self.max_retries = max_retries
+        self.delay = delay
         self.data = self.get_data()
 
         if self.data is None or self.data.empty:
             raise ValueError("No data was found for the given parameters.")
 
-        def get_data(self):
-            pass
+    def get_data(self):
+        for _ in range(self.max_retries):
+            try:
+                data = yf.download(
+                    self.symbol,
+                    start=self.start,
+                    end=self.end,
+                    interval=self.interval,
+                )
+                return data
+            except Exception as e:
+                logger.error(f"Error occurred while fetching data: {e}")
+                time.sleep(self.delay)
+        else:
+            logger.error(f"Failed to fetch data for {self.symbol} after {self.max_retries} retries.")
+            return None
