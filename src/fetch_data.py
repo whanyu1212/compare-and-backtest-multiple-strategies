@@ -66,5 +66,22 @@ class FinancialDataExtractor:
                 logger.error(f"Error occurred while fetching data: {e}")
                 time.sleep(self.delay)
         else:
-            logger.error(f"Failed to fetch data for {self.symbol} after {self.max_retries} retries.")
+            logger.error(
+                f"Failed to fetch data for {self.symbol} after {self.max_retries} retries."
+            )
             return None
+
+    def get_key_stats(self):
+        ticker = yf.Ticker(self.symbol)
+        ticker.history(start=self.start, end=self.end, period=self.interval)
+        return ticker.info
+
+    def calculate_returns(self):
+        self.data["Returns"] = self.data["Close"].pct_change()
+        return self.data
+
+    def data_extraction_flow(self):
+        self.get_data()
+        self.calculate_returns()
+        ticker_stats = self.get_key_stats()
+        return self.data, ticker_stats
