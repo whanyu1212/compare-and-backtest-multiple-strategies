@@ -3,27 +3,40 @@ import pandas as pd
 import time
 from loguru import logger
 from datetime import datetime, timedelta
-from util.utility_functions import parse_cfg
 
 
 class FinancialDataExtractor:
+    VALID_INTERVALS = [
+        "1m",
+        "2m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "90m",
+        "1h",
+        "1d",
+        "5d",
+        "1wk",
+        "1mo",
+        "3mo",
+    ]
+
     def __init__(
         self,
         symbol: str,
         start: str,
         end: str,
-        amount: float,
-        transaction_cost: float,
         interval: str = "1d",
         max_retries: int = 3,
         delay: int = 1,
     ):
         if not isinstance(symbol, str) or not symbol:
             raise ValueError("Symbol must be a non-empty string.")
-
-        valid_intervals = parse_cfg("./config/parameters.yaml")["valid_intervals"]
-        if interval not in valid_intervals:
-            raise ValueError(f"Invalid interval. Must be one of {valid_intervals}.")
+        if interval not in self.VALID_INTERVALS:
+            raise ValueError(
+                f"Invalid interval. Must be one of {self.VALID_INTERVALS}."
+            )
 
         try:
             pd.to_datetime(start)
@@ -42,8 +55,6 @@ class FinancialDataExtractor:
         self.symbol = symbol
         self.start = start
         self.end = end
-        self.amount = amount
-        self.transaction_cost = transaction_cost
         self.interval = interval
         self.max_retries = max_retries
         self.delay = delay
@@ -55,11 +66,9 @@ class FinancialDataExtractor:
     def get_data(self):
         for _ in range(self.max_retries):
             try:
-                data = yf.download(
-                    self.symbol,
-                    start=self.start,
-                    end=self.end,
-                    interval=self.interval,
+                ticker = yf.Ticker(self.symbol)
+                data = ticker.history(
+                    start=self.start, end=self.end, period=self.interval
                 )
                 return data
             except Exception as e:
@@ -70,18 +79,3 @@ class FinancialDataExtractor:
                 f"Failed to fetch data for {self.symbol} after {self.max_retries} retries."
             )
             return None
-
-    def get_key_stats(self):
-        ticker = yf.Ticker(self.symbol)
-        ticker.history(start=self.start, end=self.end, period=self.interval)
-        return ticker.info
-
-    def calculate_returns(self):
-        self.data["Returns"] = self.data["Close"].pct_change()
-        return self.data
-
-    def data_extraction_flow(self):
-        self.get_data()
-        self.calculate_returns()
-        ticker_stats = self.get_key_stats()
-        return self.data, ticker_stats

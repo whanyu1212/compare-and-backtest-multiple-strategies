@@ -1,7 +1,8 @@
 import streamlit as st
 from streamlit_lottie import st_lottie
 from datetime import datetime
-from fetch_data import FinancialDataExtractor
+from util.utility_functions import fetch_data, plot_candlestick_with_indicators
+from calculate_indicators import FinancialIndicators
 from streamlit_extras.metric_cards import style_metric_cards
 import plotly.graph_objects as go
 
@@ -21,30 +22,20 @@ sidebar = st.sidebar
 st.text("")
 st.text("")
 
-tab1, tab2, tab3 = st.tabs(
-    ["Exploratory Data Analysis", "Strategy Comparison", "Strategy Optimization"]
+tab1, tab2, tab3, tab4 = st.tabs(
+    [
+        "Exploratory Data Analysis",
+        "MACD Strategy",
+        "ML based Strategy",
+        "Genetic Algorithm",
+    ]
 )
-
-
-def fetch_data():
-    extractor = FinancialDataExtractor(
-        symbol=selected_stock,
-        start=date_range[0].strftime("%Y-%m-%d"),
-        end=date_range[1].strftime("%Y-%m-%d"),
-        amount=10000,
-        transaction_cost=0.01,
-        interval="1d",
-    )
-
-    df, df_stats = extractor.data_extraction_flow()
-
-    return df, df_stats
 
 
 with sidebar:
     st.subheader("Backtesting Web App")
     st.divider()
-    selected_stock = st.sidebar.text_input("Enter a valid stock ticker...", "AAPL")
+    selected_stock = st.sidebar.text_input("Enter a valid stock ticker...", "GOOGL")
     st.text("")
     date_range = st.date_input(
         "Select date range for data extraction",
@@ -57,39 +48,85 @@ with sidebar:
 with tab1:
 
     if button_clicked:
+        # spinner is not a must here because it loads really fast
         with st.spinner("Fetching data in progress..."):
-            df, df_stats = fetch_data()
-            col1, col2, col3, col4 = st.columns(4)
-            col1.metric("At Close", f"${round(df['Close'][-1], 2)}")
-            col2.metric("Beta", f"{round(df_stats['beta'], 2)}")
-            col3.metric("Volumne", f"{df_stats['volume']}")
-            col4.metric("Forward PE", f"{round(df_stats['forwardPE'], 2)}")
+            # Fetch the data from the API once the button is clicked
+            df = fetch_data(selected_stock, date_range)
+            df_copy = df.copy()
+            calculator = FinancialIndicators(
+                df_copy, lags=[1, 2, 3, 4, 5], windows=[5, 14, 30, 50, 100]
+            )
+            df_w_indicators = calculator.calculate_all_indicators()
+            columns = ["Close", "RSI_14", "SMA_14", "EMA_14", "ATR_14", "MACD"]
+            col_objects = st.columns(len(columns))
+
+            for col, name in zip(col_objects, columns):
+                col.metric(
+                    name,
+                    f"{round(df_w_indicators[name].iloc[-1], 2)}",
+                    f"{round((df_w_indicators[name].iloc[-1] / df_w_indicators[name].iloc[-2] - 1)*100,2)}%",
+                )
+
             style_metric_cards(border_left_color="#ADD8E6")
-            col_1, col_2 = st.columns(2)
+            col_1, col_2 = st.columns([1, 1])
             with col_1:
-                st.dataframe(df, width=800, height=400)
+                st.dataframe(
+                    df_copy.filter(items=["Open", "High", "Low", "Close", "Volume"]),
+                    use_container_width=True,
+                )
             with col_2:
-                fig = go.Figure(
-                    data=[
-                        go.Candlestick(
-                            x=df.index,
-                            open=df["Open"],
-                            high=df["High"],
-                            low=df["Low"],
-                            close=df["Close"],
-                        )
-                    ]
-                )
-                fig.update_layout(
-                    title="Candlestick Chart of AAPL Stock's Price",
-                    title_x=0.3,
-                    title_y=1,
-                    xaxis_title="Date",
-                    yaxis_title="Closing Price",
-                    xaxis_showgrid=True,  # Add grid to x-axis
-                    yaxis_showgrid=True,  # Add grid to y-axis
-                    plot_bgcolor="rgba(0, 0, 0, 0)",  # Set plot background to transparent
-                    xaxis_rangeslider_visible=False,
-                    margin=dict(l=20, r=20, t=30, b=20),
-                )
-                st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+                plot_candlestick_with_indicators(df_w_indicators, ["SMA_14", "EMA_14"])
+
+        st.text("")
+        st.dataframe(df_w_indicators.head(10), use_container_width=True)
+
+with tab2:
+    if button_clicked:
+        st.header("MACD Strategy")
+        st.markdown(
+            """
+The Moving Average Convergence Divergence (MACD) strategy is a technical analysis tool used to identify market trends and momentum. It consists of:
+
+- **MACD Line**: The difference between the 12-period and 26-period Exponential Moving Averages.
+- **Signal Line**: The 9-period EMA of the MACD Line.
+
+**Key Signals**:
+- **Crossovers**: Buy signal when the MACD Line crosses above the Signal Line. Sell signal when it crosses below.
+- **Divergence**: Indicates potential trend reversal if the price moves opposite to MACD.
+- **Overbought/Oversold**: Extreme MACD values may suggest reversal conditions.
+
+It's favored for its simplicity and effectiveness in trending markets.
+"""
+        )
+        df_MACD = df_w_indicators.copy()
+        # Initialize the column
+        df_MACD["Position"] = 0
+
+        # Generate buy signals
+        df_MACD.loc[df_MACD["MACD"] > df_MACD["Signal Line"], "Position"] = 1
+
+        # Generate sell signals
+        df_MACD.loc[df_MACD["MACD"] < df_MACD["Signal Line"], "Position"] = -1
+
+        df_MACD["Strategy"] = df_MACD["Position"].shift(1) * df_MACD["Returns"]
+
+        df_MACD["Cumulative Returns"] = df_MACD["Returns"].cumsum()
+        df_MACD["Cumulative Strategy"] = df_MACD["Strategy"].cumsum()
+
+        # plot a line chart using plotly
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=df_MACD.index,
+                y=df_MACD["Cumulative Returns"],
+                name="Cumulative Returns",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=df_MACD.index,
+                y=df_MACD["Cumulative Strategy"],
+                name="Cumulative Strategy",
+            )
+        )
+        st.plotly_chart(fig, use_container_width=True)
