@@ -21,6 +21,11 @@ def fetch_data(selected_stock, date_range, interval="1d"):
     return df
 
 
+def load_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+
 import plotly.graph_objects as go
 import streamlit as st
 
