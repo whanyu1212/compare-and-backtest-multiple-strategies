@@ -1,7 +1,10 @@
 import streamlit as st
 from streamlit_lottie import st_lottie
 from datetime import datetime
-from util.utility_functions import fetch_data, plot_candlestick_with_indicators
+from util.utility_functions import (
+    load_css,
+)
+from backtests.SMA import SMAVectorBacktester
 from calculate_indicators import FinancialIndicators
 from fetch_data import FinancialDataExtractor
 from streamlit_extras.metric_cards import style_metric_cards
@@ -13,11 +16,7 @@ st.set_page_config(layout="wide")
 symbols = ["AAPL", "GOOGL", "META", "NFLX", "AMZN"]
 
 
-def custom_header(text):
-    st.markdown(
-        f'<h1 style="font-family:Space Grotesk; font-size:35px; font-weight:700; line-height:1.2; text-align:left; padding-bottom:35px;">{text}</h1>',
-        unsafe_allow_html=True,
-    )
+load_css("./src/style.css")
 
 
 sidebar = st.sidebar
@@ -27,6 +26,10 @@ with sidebar:
     option = st.selectbox(
         "Pick the stock to update the chart",
         symbols,
+    )
+    st.text("")
+    initial_capital = st.text_input(
+        "Starting Capital (Please enter a valid number)", 10000
     )
     st.text("")
     date_range = st.date_input(
@@ -49,7 +52,10 @@ df = extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
 col1, col2, col3, col4, col5, col6 = st.columns([1.5, 1, 1, 1, 1, 1])
 
 with col1:
-    custom_header("Stock Trading Dashboard")
+    st.markdown(
+        f'<h1 class="my-header">Stock Backtesting Dashboard</h1>',
+        unsafe_allow_html=True,
+    )
 
 
 columns = [col2, col3, col4, col5, col6]
@@ -69,7 +75,7 @@ for symbol, column in zip(symbols, columns):
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
         "Exploratory Data Analysis",
-        "SuperTrend Strategy",
+        "SMA 5-8-13 Strategy",
         "Disparity Index Strategy",
         "True Strength Index Strategy",
         "ML based Strategy",
@@ -103,9 +109,25 @@ with tab1:
 
             chart.set(df.query(f"Symbol == '{option}'"))
             chart.load()
-        st.dataframe(df.query(f"Symbol == '{option}'"), use_container_width=True)
+            st.divider()
+
+        table_title_text = f"Sample data for {option} Stock from {date_range[0].strftime('%Y-%m-%d')} to {date_range[1].strftime('%Y-%m-%d')}"
+        st.markdown(
+            f'<h2 class="my-header">{table_title_text}</h2>', unsafe_allow_html=True
+        )
+        st.dataframe(
+            df.query(f"Symbol == '{option}'").drop("Symbol", axis=1),
+            use_container_width=True,
+        )
     else:
         st.info(
             "Please click on the Update Chart button to load the candlestick chart for the selected stock",
             icon="ℹ️",
         )
+
+with tab2:
+    if button_clicked:
+        sma_tester = SMAVectorBacktester(
+            df.query("Symbol==@option"), float(initial_capital)
+        )
+        st.write(sma_tester.backtesting_strategy())
