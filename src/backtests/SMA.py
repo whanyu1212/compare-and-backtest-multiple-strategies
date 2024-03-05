@@ -57,8 +57,11 @@ class SMAVectorBacktester:
             self.no_of_shares = math.floor(self.equity / df.Close[i])
             self.equity -= self.no_of_shares * df.Close[i]
             self.in_position = True
+            df.loc[i, "Position"] = 1
+            df.loc[i, "No of Shares"] = self.no_of_shares
+            df.loc[i, "Equity"] = self.equity
         logger.info(
-            f"{self.no_of_shares} shares bought at {df.Close[i]} on {df.index[i]}"
+            f"{self.no_of_shares} shares bought at {df.Close[i]} on {df.Date[i]}"
         )
 
     def sell_signal(self, df, i):
@@ -71,16 +74,20 @@ class SMAVectorBacktester:
         ):
             self.equity += self.no_of_shares * df.Close[i]
             self.in_position = False
-        logger.info(
-            f"{self.no_of_shares} shares sold at {df.Close[i]} on {df.index[i]}"
-        )
+            df.loc[i, "Position"] = -1
+            df.loc[i, "No of Shares"] = 0
+            df.loc[i, "Equity"] = self.equity
+        logger.info(f"{self.no_of_shares} shares sold at {df.Close[i]} on {df.Date[i]}")
 
     def close_position(self, df, i):
         if self.in_position == True:
             self.equity += self.no_of_shares * df.Close[i]
             self.in_position = False
+            df.loc[i, "Position"] = -1
+            df.loc[i, "No of Shares"] = 0
+            df.loc[i, "Equity"] = self.equity
         logger.info(
-            f"Closing position at {df.Close[i]} on {df.index[i]}. Equity is {self.equity}"
+            f"Closing position at {df.Close[i]} on {df.Date[i]}. Equity is {self.equity}"
         )
 
     def calculate_buy_and_hold_roi(self):
@@ -96,12 +103,59 @@ class SMAVectorBacktester:
             (self.equity - self.initial_capital) / self.initial_capital * 100, 2
         )
 
-    def backtesting_strategy(self):
-        df = self.df.copy()
+    def initialize_dataframe(self, df):
+        df = df.copy()
         df = self.calculate_moving_averages(df)
+        df = df.dropna().reset_index()
+        df["Equity"] = None
+        df.loc[0, "Equity"] = self.initial_capital
+        df.loc[0, "Buy and Hold Equity"] = self.initial_capital
+        df.loc[0, "No of Shares"] = 0
+        df.loc[:, "Buy and Hold Shares"] = math.floor(self.equity / df.Close[0])
+        return df
+
+    def execute_signals(self, df):
         for i in range(1, len(df)):
             self.buy_signal(df, i)
             self.sell_signal(df, i)
-        self.close_position(df, i)
-        roi = self.calculate_earning_roi()
-        return roi
+        return df
+
+    def fill_missing_values(self, df):
+        df["Position"].fillna(0, inplace=True)
+        df["Equity"].fillna(method="ffill", inplace=True)
+        df["No of Shares"].fillna(method="ffill", inplace=True)
+        return df
+
+    def calculate_returns(self, df):
+        df["Strategy Equity"] = df["Equity"] + df["No of Shares"] * df["Close"]
+        df["Buy and Hold Equity"] = df["Buy and Hold Shares"] * df["Close"]
+        df["Buy and Hold Return"] = df["Close"].pct_change()
+        df["Cumulative Buy and Hold Return"] = df["Buy and Hold Return"].cumsum()
+        df["Strategy Equity Return"] = df["Strategy Equity"].pct_change()
+        df["Cumulative Strategy Return"] = df["Strategy Equity Return"].cumsum()
+        return df
+
+    def calculate_max_drawdown(self, df):
+
+        # Calculate the running maximum
+        running_max_strategy = df["Cumulative Strategy Return"].cummax()
+        running_max_buy_and_hold = df["Cumulative Buy and Hold Return"].cummax()
+
+        # Calculate the drawdown
+        df["Strategy Drawdown"] = (
+            df["Cumulative Strategy Return"] - running_max_strategy
+        ) / running_max_strategy
+        df["Buy and Hold Drawdown"] = (
+            df["Cumulative Buy and Hold Return"] - running_max_buy_and_hold
+        ) / running_max_buy_and_hold
+
+        return df
+
+    def backtesting_strategy(self):
+        df = self.initialize_dataframe(self.df)
+        df = self.execute_signals(df)
+        self.close_position(df, len(df) - 1)
+        df = self.fill_missing_values(df)
+        df = self.calculate_returns(df)
+        df = self.calculate_max_drawdown(df)
+        return df
