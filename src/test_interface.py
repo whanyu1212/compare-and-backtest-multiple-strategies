@@ -156,7 +156,7 @@ with tab2:
                     title="Strategy vs Buy and Hold Return",
                     xaxis_title="Backtesting Period",
                     yaxis_title="Cumulative Return in %",
-                    title_x=0.4,
+                    title_x=0.2,
                 )
                 st.plotly_chart(fig, use_container_width=True)
             with col2:
@@ -181,7 +181,7 @@ with tab2:
                     title="Strategy vs Buy and Hold Drawdown",
                     xaxis_title="Backtesting Period",
                     yaxis_title="Drawdown in %",
-                    title_x=0.4,
+                    title_x=0.2,
                 )
                 st.plotly_chart(figure, use_container_width=True)
 
