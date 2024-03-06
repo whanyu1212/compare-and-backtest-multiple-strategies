@@ -10,9 +10,9 @@ class SMAVectorBacktester:
         df: pd.DataFrame,
         initial_capital: Union[int, float],
         in_position: bool = False,
-        sma1: int = 5,
-        sma2: int = 8,
-        sma3: int = 13,
+        SMA1: int = 2,
+        SMA2: int = 3,
+        SMA3: int = 19,
     ):
         if not isinstance(df, pd.DataFrame) or df.empty:
             raise ValueError("df must be a non-empty DataFrame")
@@ -22,140 +22,164 @@ class SMAVectorBacktester:
             raise ValueError("initial_capital must be a positive number")
         if not isinstance(in_position, bool):
             raise ValueError("in_position must be a boolean")
-        if not isinstance(sma1, int) or sma1 <= 0:
-            raise ValueError("sma1 must be a positive integer")
-        if not isinstance(sma2, int) or sma2 <= 0:
-            raise ValueError("sma2 must be a positive integer")
-        if not isinstance(sma3, int) or sma3 <= 0:
-            raise ValueError("sma3 must be a positive integer")
-        if not sma1 < sma2 < sma3:
-            raise ValueError("sma1, sma2, and sma3 must be in ascending order")
+        if not isinstance(SMA1, int) or SMA1 <= 0:
+            raise ValueError("SMA1 must be a positive integer")
+        if not isinstance(SMA2, int) or SMA2 <= 0:
+            raise ValueError("SMA2 must be a positive integer")
+        if not isinstance(SMA3, int) or SMA3 <= 0:
+            raise ValueError("SMA3 must be a positive integer")
+        if not SMA1 < SMA2 < SMA3:
+            raise ValueError("SMA1, SMA2, and SMA3 must be in ascending order")
 
-        self.df = df
-        self.sma1 = sma1
-        self.sma2 = sma2
-        self.sma3 = sma3
+        self.df = df.drop(["Open", "High", "Low", "Volume"], axis=1)
+        self.SMA1 = SMA1
+        self.SMA2 = SMA2
+        self.SMA3 = SMA3
         self.in_position = in_position
         self.initial_capital = initial_capital
-        self.equity = self.initial_capital
+        self.balance = self.initial_capital
         self.no_of_shares = 0
 
     def calculate_moving_averages(self, df):
-        df["sma1"] = df["Close"].rolling(window=self.sma1).mean()
-        df["sma2"] = df["Close"].rolling(window=self.sma2).mean()
-        df["sma3"] = df["Close"].rolling(window=self.sma3).mean()
+        df["SMA1"] = df["Close"].rolling(window=self.SMA1).mean()
+        df["SMA2"] = df["Close"].rolling(window=self.SMA2).mean()
+        df["SMA3"] = df["Close"].rolling(window=self.SMA3).mean()
+        return df
+
+    def calculate_daily_returns(self, df):
+        df["Returns"] = df["Close"].pct_change()
+        return df
+
+    def create_columns(self, df):
+        initial_values = {
+            "In Position": (self.in_position, "bool"),
+            "Balance": (self.balance, "float64"),
+            "No of Shares": (self.no_of_shares, "float64"),
+        }
+
+        for column, (initial_value, dtype) in initial_values.items():
+            df[column] = pd.Series(dtype=dtype)
+            df.loc[0, column] = initial_value
+
         return df
 
     def buy_signal(self, df, i):
         if (
-            df["sma2"][i - 1] < df["sma3"][i - 1]
-            and df["sma2"][i] > df["sma3"][i]
-            and df["sma1"][i] > df["sma2"][i]
-            and df["Close"][i] > df["sma1"][i]
+            df["SMA2"][i - 1] < df["SMA3"][i - 1]
+            and df["SMA2"][i] > df["SMA3"][i]
+            and df["SMA1"][i] > df["SMA2"][i]
+            and df["Close"][i] > df["SMA1"][i]
             and self.in_position == False
         ):
-            self.no_of_shares = math.floor(self.equity / df.Close[i])
-            self.equity -= self.no_of_shares * df.Close[i]
-            self.in_position = True
-            df.loc[i, "Position"] = 1
-            df.loc[i, "No of Shares"] = self.no_of_shares
-            df.loc[i, "Equity"] = self.equity
-        logger.info(
-            f"{self.no_of_shares} shares bought at {df.Close[i]} on {df.Date[i]}"
-        )
+            return True
 
     def sell_signal(self, df, i):
         if (
-            df["sma2"][i - 1] > df["sma3"][i - 1]
-            and df["sma2"][i] < df["sma3"][i]
-            and df["sma1"][i] < df["sma2"][i]
-            and df["Close"][i] < df["sma1"][i]
+            df["SMA2"][i - 1] > df["SMA3"][i - 1]
+            and df["SMA2"][i] < df["SMA3"][i]
+            and df["SMA1"][i] < df["SMA2"][i]
+            and df["Close"][i] < df["SMA1"][i]
             and self.in_position == True
         ):
-            self.equity += self.no_of_shares * df.Close[i]
-            self.in_position = False
-            df.loc[i, "Position"] = -1
-            df.loc[i, "No of Shares"] = 0
-            df.loc[i, "Equity"] = self.equity
-        logger.info(f"{self.no_of_shares} shares sold at {df.Close[i]} on {df.Date[i]}")
+            return True
 
-    def close_position(self, df, i):
-        if self.in_position == True:
-            self.equity += self.no_of_shares * df.Close[i]
-            self.in_position = False
-            df.loc[i, "Position"] = -1
-            df.loc[i, "No of Shares"] = 0
-            df.loc[i, "Equity"] = self.equity
-        logger.info(
-            f"Closing position at {df.Close[i]} on {df.Date[i]}. Equity is {self.equity}"
-        )
-
-    def calculate_buy_and_hold_roi(self):
-        return round(
-            (self.df["Close"].iloc[-1] - self.df["Close"].iloc[0])
-            / self.df["Close"].iloc[0]
-            * 100,
-            2,
-        )
-
-    def calculate_earning_roi(self):
-        return round(
-            (self.equity - self.initial_capital) / self.initial_capital * 100, 2
-        )
-
-    def initialize_dataframe(self, df):
-        df = df.copy()
-        df = self.calculate_moving_averages(df)
-        df = df.dropna().reset_index()
-        df["Equity"] = None
-        df.loc[0, "Equity"] = self.initial_capital
-        df.loc[0, "Buy and Hold Equity"] = self.initial_capital
-        df.loc[0, "No of Shares"] = 0
-        df.loc[:, "Buy and Hold Shares"] = math.floor(self.equity / df.Close[0])
-        return df
-
-    def execute_signals(self, df):
+    def backtest_strategy(self, df):
         for i in range(1, len(df)):
-            self.buy_signal(df, i)
-            self.sell_signal(df, i)
-        return df
+            if self.buy_signal(df, i):
+                self.no_of_shares = math.floor(self.balance / df.loc[i, "Close"])
+                self.balance -= self.no_of_shares * df.loc[i, "Close"]
+                self.in_position = True
+            elif self.sell_signal(df, i):
+                self.balance += self.no_of_shares * df.loc[i, "Close"]
+                self.no_of_shares = 0
+                self.in_position = False
 
-    def fill_missing_values(self, df):
-        df["Position"].fillna(0, inplace=True)
-        df["Equity"].fillna(method="ffill", inplace=True)
-        df["No of Shares"].fillna(method="ffill", inplace=True)
-        return df
+            df.loc[i, "No of Shares"] = self.no_of_shares
+            df.loc[i, "Balance"] = self.balance
+            df.loc[i, "In Position"] = self.in_position
 
-    def calculate_returns(self, df):
-        df["Strategy Equity"] = df["Equity"] + df["No of Shares"] * df["Close"]
-        df["Buy and Hold Equity"] = df["Buy and Hold Shares"] * df["Close"]
-        df["Buy and Hold Return"] = df["Close"].pct_change()
-        df["Cumulative Buy and Hold Return"] = df["Buy and Hold Return"].cumsum()
-        df["Strategy Equity Return"] = df["Strategy Equity"].pct_change()
-        df["Cumulative Strategy Return"] = df["Strategy Equity Return"].cumsum()
-        return df
-
-    def calculate_max_drawdown(self, df):
-
-        # Calculate the running maximum
-        running_max_strategy = df["Cumulative Strategy Return"].cummax()
-        running_max_buy_and_hold = df["Cumulative Buy and Hold Return"].cummax()
-
-        # Calculate the drawdown
-        df["Strategy Drawdown"] = (
-            df["Cumulative Strategy Return"] - running_max_strategy
-        ) / running_max_strategy
-        df["Buy and Hold Drawdown"] = (
-            df["Cumulative Buy and Hold Return"] - running_max_buy_and_hold
-        ) / running_max_buy_and_hold
+        if self.in_position:
+            self.balance += self.no_of_shares * df.loc[df.index[-1], "Close"]
+            self.no_of_shares = 0
+            self.in_position = False
+            df.loc[df.index[-1], "No of Shares"] = self.no_of_shares
+            df.loc[df.index[-1], "Balance"] = self.balance
+            df.loc[df.index[-1], "In Position"] = self.in_position
 
         return df
 
-    def backtesting_strategy(self):
-        df = self.initialize_dataframe(self.df)
-        df = self.execute_signals(df)
-        self.close_position(df, len(df) - 1)
-        df = self.fill_missing_values(df)
-        df = self.calculate_returns(df)
-        df = self.calculate_max_drawdown(df)
+    def create_signal_column(self, df):
+        df["In Position Shift"] = df["In Position"].shift(1)
+        df.loc[
+            (df["In Position"] == True) & (df["In Position Shift"] == False), "Signal"
+        ] = "Buy"
+        df.loc[
+            (df["In Position"] == False) & (df["In Position Shift"] == True), "Signal"
+        ] = "Sell"
+        df["Signal"].fillna("Hold", inplace=True)
+        return df
+
+    def calculate_strategy_capital_change(self, df):
+        df["Total Strategy Capital"] = df["Balance"] + df["No of Shares"] * df["Close"]
+        return df
+
+    def calculate_buy_and_hold_capital_change(self, df):
+        left_over = (
+            10000
+            - math.floor(self.initial_capital / df.loc[0, "Close"]) * df.loc[0, "Close"]
+        )
+        df["Total Buy and Hold Capital"] = (
+            self.initial_capital * (1 + df["Returns"]).cumprod() + left_over
+        )
+        return df
+
+    def calculate_pnl(self, df):
+        df_subset = df.copy().query("Signal!='Hold'")
+        df_subset["Signal Shift"] = df_subset["Signal"].shift(1)
+        df_subset.loc[
+            (df_subset["Signal"] == "Sell") & (df_subset["Signal Shift"] == "Buy"),
+            "Realized PnL",
+        ] = df_subset["Total Strategy Capital"] - df_subset[
+            "Total Strategy Capital"
+        ].shift(
+            1
+        )
+
+        df_subset_2 = df.copy().query("Signal!='Sell'")
+        df_subset_2["Signal Shift"] = df_subset_2["Signal"].shift(1)
+        df_subset_2.loc[
+            (df_subset_2["Signal"] == "Hold") & (df_subset_2["Signal Shift"] == "Buy"),
+            "Unrealized PnL",
+        ] = df_subset_2["Total Strategy Capital"] - df_subset_2[
+            "Total Strategy Capital"
+        ].shift(
+            1
+        )
+
+        reference = 0
+
+        for index, row in df_subset_2.iterrows():
+            if row["Signal"] == "Buy":
+                reference = row["Total Strategy Capital"]
+            elif row["Signal"] == "Hold" and row["No of Shares"] > 0:
+                df_subset_2.loc[index, "Unrealized PnL"] = (
+                    row["Total Strategy Capital"] - reference
+                )
+
+        df = df.merge(df_subset[["Date", "Realized PnL"]], on="Date", how="left").merge(
+            df_subset_2[["Date", "Unrealized PnL"]], on="Date", how="left"
+        )
+
+        return df
+
+    def backtesting_flow(self):
+        df = self.df.copy().reset_index()
+        df = self.calculate_moving_averages(df)
+        df = self.calculate_daily_returns(df)
+        df = self.create_columns(df)
+        df = self.backtest_strategy(df)
+        df = self.create_signal_column(df)
+        df = self.calculate_strategy_capital_change(df)
+        df = self.calculate_buy_and_hold_capital_change(df)
+        df = self.calculate_pnl(df)
         return df

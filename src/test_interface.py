@@ -130,75 +130,26 @@ with tab2:
         sma_tester = SMAVectorBacktester(
             df.query("Symbol==@option"), float(initial_capital)
         )
-        tested_df = sma_tester.backtesting_strategy()
-        # st.dataframe(tested_df)
+        sma_df = sma_tester.backtesting_flow()
+        st.dataframe(sma_df, use_container_width=True)
         with st.expander("Key visuals"):
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                fig = go.Figure()
-                fig.add_trace(
-                    go.Scatter(
-                        x=tested_df["Date"],
-                        y=tested_df["Cumulative Strategy Return"],
-                        mode="lines",
-                        name="Strategy Return",
-                    )
+            fig = go.Figure()
+            fig.add_trace(
+                go.Scatter(
+                    x=sma_df.index,
+                    y=sma_df["Total Strategy Capital"],
+                    mode="lines",
+                    name="capital changes over time",
+                    line=dict(color="blue"),
                 )
-                fig.add_trace(
-                    go.Scatter(
-                        x=tested_df["Date"],
-                        y=tested_df["Cumulative Buy and Hold Return"],
-                        mode="lines",
-                        name="Buy and Hold Return",
-                    )
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=sma_df.index,
+                    y=sma_df["Total Buy and Hold Capital"],
+                    mode="lines",
+                    name="buy and hold strategy",
+                    line=dict(color="red"),
                 )
-                fig.update_layout(
-                    title="Strategy vs Buy and Hold Return",
-                    xaxis_title="Backtesting Period",
-                    yaxis_title="Cumulative Return in %",
-                    title_x=0.2,
-                )
-                st.plotly_chart(fig, use_container_width=True)
-            with col2:
-                figure = go.Figure()
-                figure.add_trace(
-                    go.Scatter(
-                        x=tested_df["Date"],
-                        y=tested_df["Strategy Drawdown"],
-                        mode="lines",
-                        name="Strategy Drawdown",
-                    )
-                )
-                figure.add_trace(
-                    go.Scatter(
-                        x=tested_df["Date"],
-                        y=tested_df["Buy and Hold Drawdown"],
-                        mode="lines",
-                        name="Buy and Hold Drawdown",
-                    )
-                )
-                figure.update_layout(
-                    title="Strategy vs Buy and Hold Drawdown",
-                    xaxis_title="Backtesting Period",
-                    yaxis_title="Drawdown in %",
-                    title_x=0.2,
-                )
-                st.plotly_chart(figure, use_container_width=True)
-
-        with st.expander("Statistics"):
-            st.write("Values Assumed: Benchmark = S&P 500, Risk-Free Rate = 0.01")
-            container = st.container(border=True)
-            with container:
-                col1, col2, col3, col4, col5, col6 = st.columns(6)
-
-                with col2:
-                    st.markdown("### Sharpe Ratio")
-                    st.markdown(
-                        tested_df["Strategy Equity Return"].mean()
-                        / tested_df["Strategy Equity Return"].std(),
-                    )
-                    st.metric(
-                        "Sharpe Ratio",
-                        tested_df["Strategy Equity Return"].mean()
-                        / tested_df["Strategy Equity Return"].std(),
-                    )
+            )
+            st.plotly_chart(fig, use_container_width=True)
