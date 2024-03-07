@@ -3,7 +3,11 @@ from streamlit_lottie import st_lottie
 from datetime import datetime
 from util.utility_functions import (
     load_css,
+    plot_sma_trend,
+    plot_capital_changes,
+    plot_profit_loss,
 )
+from util.st_column_config import sma_column_config
 from backtests.SMA import SMAVectorBacktester
 from calculate_indicators import FinancialIndicators
 from fetch_data import FinancialDataExtractor
@@ -75,7 +79,7 @@ for symbol, column in zip(symbols, columns):
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
         "Exploratory Data Analysis",
-        "SMA 5-8-13 Strategy",
+        "Triple SMA Crossover Strategy",
         "Disparity Index Strategy",
         "True Strength Index Strategy",
         "ML based Strategy",
@@ -131,25 +135,15 @@ with tab2:
             df.query("Symbol==@option"), float(initial_capital)
         )
         sma_df = sma_tester.backtesting_flow()
-        st.dataframe(sma_df, use_container_width=True)
+        with st.expander("Processed data"):
+            st.dataframe(
+                sma_df, use_container_width=True, column_config=sma_column_config
+            )
         with st.expander("Key visuals"):
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=sma_df.index,
-                    y=sma_df["Total Strategy Capital"],
-                    mode="lines",
-                    name="capital changes over time",
-                    line=dict(color="blue"),
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=sma_df.index,
-                    y=sma_df["Total Buy and Hold Capital"],
-                    mode="lines",
-                    name="buy and hold strategy",
-                    line=dict(color="red"),
-                )
-            )
-            st.plotly_chart(fig, use_container_width=True)
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_sma_trend(sma_df, 3, 3)
+            with col2:
+                plot_capital_changes(sma_df, "skyblue", "dodgerblue")
+
+            plot_profit_loss(sma_df, "crimson", "lightgrey")
