@@ -47,7 +47,7 @@ class SMAVectorBacktester:
         return df
 
     def calculate_daily_returns(self, df):
-        df["Returns"] = df["Close"].pct_change()
+        df["Price Returns"] = df["Close"].pct_change()
         return df
 
     def create_columns(self, df):
@@ -125,15 +125,15 @@ class SMAVectorBacktester:
 
     def calculate_buy_and_hold_capital_change(self, df):
         left_over = (
-            10000
+            self.initial_capital
             - math.floor(self.initial_capital / df.loc[0, "Close"]) * df.loc[0, "Close"]
         )
         df["Total Buy and Hold Capital"] = (
-            self.initial_capital * (1 + df["Returns"]).cumprod() + left_over
+            self.initial_capital * (1 + df["Price Returns"]).cumprod() + left_over
         )
         return df
 
-    def calculate_pnl(self, df):
+    def calculate_realized_pnl(self, df):
         df_subset = df.copy().query("Signal!='Hold'")
         df_subset["Signal Shift"] = df_subset["Signal"].shift(1)
         df_subset.loc[
@@ -144,20 +144,13 @@ class SMAVectorBacktester:
         ].shift(
             1
         )
+        df = df.merge(df_subset[["Date", "Realized PnL"]], on="Date", how="left")
+        return df
 
+    def calculate_unrealized_pnl(self, df):
         df_subset_2 = df.copy().query("Signal!='Sell'")
-        df_subset_2["Signal Shift"] = df_subset_2["Signal"].shift(1)
-        df_subset_2.loc[
-            (df_subset_2["Signal"] == "Hold") & (df_subset_2["Signal Shift"] == "Buy"),
-            "Unrealized PnL",
-        ] = df_subset_2["Total Strategy Capital"] - df_subset_2[
-            "Total Strategy Capital"
-        ].shift(
-            1
-        )
 
         reference = 0
-
         for index, row in df_subset_2.iterrows():
             if row["Signal"] == "Buy":
                 reference = row["Total Strategy Capital"]
@@ -166,10 +159,28 @@ class SMAVectorBacktester:
                     row["Total Strategy Capital"] - reference
                 )
 
-        df = df.merge(df_subset[["Date", "Realized PnL"]], on="Date", how="left").merge(
-            df_subset_2[["Date", "Unrealized PnL"]], on="Date", how="left"
-        )
+        df = df.merge(df_subset_2[["Date", "Unrealized PnL"]], on="Date", how="left")
+        return df
 
+    def reorganize_columns(self, df):
+        columns = [
+            "Date",
+            "Close",
+            "SMA1",
+            "SMA2",
+            "SMA3",
+            "Price Returns",
+            "Signal",
+            "In Position",
+            "No of Shares",
+            "Balance",
+            "Realized PnL",
+            "Unrealized PnL",
+            "Total Strategy Capital",
+            "Total Buy and Hold Capital",
+        ]
+        df = df[columns]
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date
         return df
 
     def backtesting_flow(self):
@@ -181,5 +192,7 @@ class SMAVectorBacktester:
         df = self.create_signal_column(df)
         df = self.calculate_strategy_capital_change(df)
         df = self.calculate_buy_and_hold_capital_change(df)
-        df = self.calculate_pnl(df)
+        df = self.calculate_realized_pnl(df)
+        df = self.calculate_unrealized_pnl(df)
+        df = self.reorganize_columns(df)
         return df
