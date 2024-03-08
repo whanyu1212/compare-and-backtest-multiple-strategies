@@ -201,3 +201,29 @@ def plot_profit_loss(data, realized_color, unrealized_color):
     )
 
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_drawdown_comparison(sma_df):
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=sma_df["Date"],
+            y=sma_df["Strategy Drawdown"],
+            name="Strategy Drawdown",
+            line=dict(color="skyblue"),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=sma_df["Date"],
+            y=sma_df["Buy and Hold Drawdown"],
+            name="Buy and Hold Drawdown",
+            line=dict(color="dodgerblue"),
+        )
+    )
+    fig.update_layout(
+        title="Drawdown Comparison",
+        xaxis_title="Date",
+        yaxis_title="Drawdown",
+    )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")

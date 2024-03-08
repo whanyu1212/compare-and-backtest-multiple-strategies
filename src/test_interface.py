@@ -1,4 +1,5 @@
 import streamlit as st
+import math
 from annotated_text import annotated_text
 from streamlit_lottie import st_lottie
 from datetime import datetime
@@ -7,6 +8,7 @@ from util.utility_functions import (
     plot_sma_trend,
     plot_capital_changes,
     plot_profit_loss,
+    plot_drawdown_comparison,
 )
 from util.st_column_config import sma_column_config
 from backtests.SMA import SMAVectorBacktester
@@ -45,6 +47,21 @@ with sidebar:
     interval = st.selectbox("Select the interval", ["1d", "1wk", "1mo"])
     button_clicked = st.sidebar.button("Update Chart")
 
+    for _ in range(5):
+        st.text("")
+    st.lottie(
+        "https://lottie.host/9cfe5bca-7b5c-4957-b114-582f81e20201/2idRRfzhi2.json",
+        height=100,
+        width=200,
+        speed=1,
+        key="initial",
+    )
+    st.text("")
+    st.text("")
+
+    link = ":point_right: Github Repository: [link](https://github.com/whanyu1212/compare-and-backtest-multiple-strategies)"
+    st.markdown(link, unsafe_allow_html=True)
+
 
 extractor = FinancialDataExtractor(
     symbols=symbols,
@@ -58,7 +75,21 @@ benchmark_extractor = FinancialDataExtractor(
     end=date_range[1].strftime("%Y-%m-%d"),
     interval="1d",
 )
-benchmark_df = benchmark_extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
+benchmark_df = benchmark_extractor.data.drop(
+    ["Dividends", "Stock Splits"], axis=1
+).reset_index()
+benchmark_df["Price Returns"] = benchmark_df["Close"].pct_change()
+left_over = (
+    float(initial_capital)
+    - math.floor(float(initial_capital) / benchmark_df.loc[0, "Close"])
+    * benchmark_df.loc[0, "Close"]
+)
+benchmark_df["Total Buy and Hold Capital"] = (
+    float(initial_capital) * (1 + benchmark_df["Price Returns"]).cumprod() + left_over
+)
+benchmark_df["Total Buy and Hold Capital"].fillna(float(initial_capital), inplace=True)
+
+
 df = extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
 
 col1, col2, col3, col4, col5, col6 = st.columns([1.5, 1, 1, 1, 1, 1])
@@ -227,31 +258,30 @@ with tab2:
             with col1:
                 plot_sma_trend(sma_df, 3, 3)
                 # plot drawdown
+                plot_drawdown_comparison(sma_df)
+
+            with col2:
+                plot_capital_changes(sma_df, "skyblue", "dodgerblue")
                 fig = go.Figure()
                 fig.add_trace(
                     go.Scatter(
                         x=sma_df["Date"],
-                        y=sma_df["Strategy Drawdown"],
-                        name="Total Strategy Capital",
-                        line=dict(color="skyblue"),
+                        y=sma_df["Total Strategy Capital"],
+                        name="Strategy Capital Change",
                     )
                 )
                 fig.add_trace(
                     go.Scatter(
-                        x=sma_df["Date"],
-                        y=sma_df["Buy and Hold Drawdown"],
-                        name="Total Buy and Hold Capital",
-                        line=dict(color="dodgerblue"),
+                        x=benchmark_df["Date"],
+                        y=benchmark_df["Total Buy and Hold Capital"],
+                        name="SP500 Buy and Hold Benchmark",
                     )
                 )
                 fig.update_layout(
-                    title="Drawdown Comparison",
+                    title="Capital Change vs Benchmark",
                     xaxis_title="Date",
-                    yaxis_title="Drawdown",
+                    yaxis_title="Capital",
                 )
                 st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-
-            with col2:
-                plot_capital_changes(sma_df, "skyblue", "dodgerblue")
 
             plot_profit_loss(sma_df, "crimson", "lightgrey")
