@@ -38,6 +38,7 @@ termcolor = "^2.4.0"
 lightweight-charts = "^1.0.19"
 pygad = "^3.3.1"
 tqdm = "^4.66.2"
+st-annotated-text = "^4.0.1"
 
 
 [build-system]
