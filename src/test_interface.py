@@ -1,4 +1,5 @@
 import streamlit as st
+from annotated_text import annotated_text
 from streamlit_lottie import st_lottie
 from datetime import datetime
 from util.utility_functions import (
@@ -51,13 +52,20 @@ extractor = FinancialDataExtractor(
     end=date_range[1].strftime("%Y-%m-%d"),
     interval="1d",
 )
+benchmark_extractor = FinancialDataExtractor(
+    symbols=["^GSPC"],
+    start=date_range[0].strftime("%Y-%m-%d"),
+    end=date_range[1].strftime("%Y-%m-%d"),
+    interval="1d",
+)
+benchmark_df = benchmark_extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
 df = extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
 
 col1, col2, col3, col4, col5, col6 = st.columns([1.5, 1, 1, 1, 1, 1])
 
 with col1:
     st.markdown(
-        f'<h1 class="my-header">Stock Backtesting Dashboard</h1>',
+        f'<h2 class="my-header">Stock Backtesting Dashboard</h2>',
         unsafe_allow_html=True,
     )
 
@@ -123,6 +131,10 @@ with tab1:
             df.query(f"Symbol == '{option}'").drop("Symbol", axis=1),
             use_container_width=True,
         )
+        st.dataframe(
+            benchmark_df.drop("Symbol", axis=1),
+            use_container_width=True,
+        )
     else:
         st.info(
             "Please click on the Update Chart button to load the candlestick chart for the selected stock",
@@ -135,6 +147,77 @@ with tab2:
             df.query("Symbol==@option"), float(initial_capital)
         )
         sma_df = sma_tester.backtesting_flow()
+        sma_sharpe = sma_df["Total Strategy Capital"].pct_change().mean() / (
+            sma_df["Total Strategy Capital"].pct_change().std()
+        )
+        sma_sortino = sma_df["Total Strategy Capital"].pct_change().mean() / (
+            sma_df["Total Strategy Capital"]
+            .pct_change()
+            .loc[sma_df["Total Strategy Capital"].pct_change() < 0]
+            .std()
+        )
+        sma_profit_percentage = (
+            (sma_df["Total Strategy Capital"].iloc[-1] / float(initial_capital)) - 1
+        ) * 100
+        sma_buy_hold_percentage = (
+            (sma_df["Total Buy and Hold Capital"].iloc[-1] / float(initial_capital)) - 1
+        ) * 100
+        sma_max_drawdown = sma_df["Strategy Max Drawdown"].iloc[-1]
+        sma_total_signa = sma_df.query("Signal!='Hold'").shape[0]
+
+        st.header("Intuition behind the Triple SMA Crossover Strategy")
+        annotated_text(
+            "The Triple SMA Crossover strategy involves",
+            ("three Simple Moving Averages (SMAs)", "", "#fea"),
+            "to signal trading opportunities based on trend direction changes. \
+            A buy signal is generated when a short-term SMA ",
+            ("crosses above", "", "#fea"),
+            " both medium- and long-term SMAs, indicating an upward\
+            trend. Conversely, a sell signal occurs when a short-term SMA",
+            ("crosses below", "", "#fea"),
+            " both medium- and long-term SMAs, suggesting a \
+            downward trend. This method aims to filter market noise and \
+            improve trade reliability by using three time frames for trend confirmation",
+        )
+        with st.expander("Key Statistics"):
+            col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+            with col1:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Sharpe Ratio: <br> {round(sma_sharpe,2)} </h2>",
+                        unsafe_allow_html=True,
+                    )
+            with col2:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Sortino Ratio: <br> {round(sma_sortino,2)}</h2>",
+                        unsafe_allow_html=True,
+                    )
+
+            with col3:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Strategy Profit %: <br> {round(sma_profit_percentage,2)}%</h2>",
+                        unsafe_allow_html=True,
+                    )
+            with col4:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Buy&Hold Profit %: <br> {round(sma_buy_hold_percentage,2)}%</h2>",
+                        unsafe_allow_html=True,
+                    )
+            with col5:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Max Drawdown: <br> {round(sma_max_drawdown,2)} </h2>",
+                        unsafe_allow_html=True,
+                    )
+            with col6:
+                with st.container(height=120):
+                    st.markdown(
+                        f"<h2 style='text-align: center; font-family: Space Grotesk;'>Total No. of Signals: <br> {sma_total_signa} </h2>",
+                        unsafe_allow_html=True,
+                    )
         with st.expander("Processed data"):
             st.dataframe(
                 sma_df, use_container_width=True, column_config=sma_column_config
@@ -143,6 +226,31 @@ with tab2:
             col1, col2 = st.columns([1, 1])
             with col1:
                 plot_sma_trend(sma_df, 3, 3)
+                # plot drawdown
+                fig = go.Figure()
+                fig.add_trace(
+                    go.Scatter(
+                        x=sma_df["Date"],
+                        y=sma_df["Strategy Drawdown"],
+                        name="Total Strategy Capital",
+                        line=dict(color="skyblue"),
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=sma_df["Date"],
+                        y=sma_df["Buy and Hold Drawdown"],
+                        name="Total Buy and Hold Capital",
+                        line=dict(color="dodgerblue"),
+                    )
+                )
+                fig.update_layout(
+                    title="Drawdown Comparison",
+                    xaxis_title="Date",
+                    yaxis_title="Drawdown",
+                )
+                st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
             with col2:
                 plot_capital_changes(sma_df, "skyblue", "dodgerblue")
 

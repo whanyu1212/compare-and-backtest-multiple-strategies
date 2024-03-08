@@ -131,6 +131,7 @@ class SMAVectorBacktester:
         df["Total Buy and Hold Capital"] = (
             self.initial_capital * (1 + df["Price Returns"]).cumprod() + left_over
         )
+        df["Total Buy and Hold Capital"].fillna(self.initial_capital, inplace=True)
         return df
 
     def calculate_realized_pnl(self, df):
@@ -162,6 +163,28 @@ class SMAVectorBacktester:
         df = df.merge(df_subset_2[["Date", "Unrealized PnL"]], on="Date", how="left")
         return df
 
+    def calculate_strategy_drawdown_and_max_drawdown(self, df):
+        # Calculate the running maximum
+        df["Strategy Cumulative Max"] = df["Total Strategy Capital"].cummax()
+        # Calculate the drawdown
+        df["Strategy Drawdown"] = (
+            df["Total Strategy Capital"] - df["Strategy Cumulative Max"]
+        ) / df["Strategy Cumulative Max"]
+        # Calculate the max drawdown
+        df["Strategy Max Drawdown"] = df["Strategy Drawdown"].min()
+        return df
+
+    def calculate_buy_and_hold_drawdown_and_max_drawdown(self, df):
+        # Calculate the running maximum
+        df["Buy and Hold Cumulative Max"] = df["Total Buy and Hold Capital"].cummax()
+        # Calculate the drawdown
+        df["Buy and Hold Drawdown"] = (
+            df["Total Buy and Hold Capital"] - df["Buy and Hold Cumulative Max"]
+        ) / df["Buy and Hold Cumulative Max"]
+        # Calculate the max drawdown
+        df["Buy and Hold Max Drawdown"] = df["Buy and Hold Drawdown"].min()
+        return df
+
     def reorganize_columns(self, df):
         columns = [
             "Date",
@@ -178,6 +201,10 @@ class SMAVectorBacktester:
             "Unrealized PnL",
             "Total Strategy Capital",
             "Total Buy and Hold Capital",
+            "Strategy Drawdown",
+            "Strategy Max Drawdown",
+            "Buy and Hold Drawdown",
+            "Buy and Hold Max Drawdown",
         ]
         df = df[columns]
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
@@ -194,5 +221,7 @@ class SMAVectorBacktester:
         df = self.calculate_buy_and_hold_capital_change(df)
         df = self.calculate_realized_pnl(df)
         df = self.calculate_unrealized_pnl(df)
+        df = self.calculate_strategy_drawdown_and_max_drawdown(df)
+        df = self.calculate_buy_and_hold_drawdown_and_max_drawdown(df)
         df = self.reorganize_columns(df)
         return df
