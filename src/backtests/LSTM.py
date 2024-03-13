@@ -1,55 +1,79 @@
-import math
+import numpy as np
 import pandas as pd
+import math
+import matplotlib.pyplot as plt
+from sklearn.metrics import *
 from typing import Union
 from util.utility_functions import parse_cfg
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
 
 
-class SMAVectorBacktester:
+class LSTMVectorBacktester:
     def __init__(
         self,
         df: pd.DataFrame,
         initial_capital: Union[int, float],
         in_position: bool = False,
-        SMA1: int = 2,
-        SMA2: int = 3,
-        SMA3: int = 19,
+        time_step: int = 5,
     ):
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            raise ValueError("df must be a non-empty DataFrame")
-        if not "Close" in df.columns:
-            raise ValueError("No Close column found")
-        if not isinstance(initial_capital, (int, float)) or initial_capital <= 0:
-            raise ValueError("initial_capital must be a positive number")
-        if not isinstance(in_position, bool):
-            raise ValueError("in_position must be a boolean")
-        if not isinstance(SMA1, int) or SMA1 <= 0:
-            raise ValueError("SMA1 must be a positive integer")
-        if not isinstance(SMA2, int) or SMA2 <= 0:
-            raise ValueError("SMA2 must be a positive integer")
-        if not isinstance(SMA3, int) or SMA3 <= 0:
-            raise ValueError("SMA3 must be a positive integer")
-        if not SMA1 < SMA2 < SMA3:
-            raise ValueError("SMA1, SMA2, and SMA3 must be in ascending order")
-
-        self.df = df.drop(["Open", "High", "Low", "Volume"], axis=1)
-        self.SMA1 = SMA1
-        self.SMA2 = SMA2
-        self.SMA3 = SMA3
-        self.in_position = in_position
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError("df must be a pandas DataFrame")
+        self.df = df
         self.initial_capital = initial_capital
+        self.in_position = in_position
         self.balance = self.initial_capital
+        self.time_step = time_step
         self.no_of_shares = 0
         self.base_columns = parse_cfg("./config/parameters.yaml")["base_columns"]
-
-    def calculate_moving_averages(self, df):
-        df["SMA1"] = df["Close"].rolling(window=self.SMA1).mean()
-        df["SMA2"] = df["Close"].rolling(window=self.SMA2).mean()
-        df["SMA3"] = df["Close"].rolling(window=self.SMA3).mean()
-        return df
 
     def calculate_daily_returns(self, df):
         df["Market Returns"] = df["Close"].pct_change()
         return df
+
+    def scaling_df(self, df):
+        self.scaler = MinMaxScaler()
+        df_scaled = self.scaler.fit_transform(df["Close"].values.reshape(-1, 1))
+        return df_scaled
+
+    def create_dataset(self, dataset):
+        X_data, y_data = [], []
+        for i in range(len(dataset) - self.time_step - 1):
+            X_data.append(dataset[i : (i + self.time_step), 0])
+            y_data.append(dataset[i + self.time_step, 0])
+        return np.array(X_data), np.array(y_data)
+
+    def reshape_x_input(self, X_data):
+        return np.reshape(X_data, (X_data.shape[0], X_data.shape[1], 1))
+
+    def create_model(self, input_shape):
+        model = Sequential()
+        model.add(LSTM(units=64, return_sequences=True, input_shape=input_shape))
+        model.add(Dropout(0.2))
+        model.add(LSTM(units=64, return_sequences=True))
+        model.add(Dropout(0.2))
+        model.add(LSTM(units=64, return_sequences=False))
+        model.add(Dropout(0.2))
+        model.add(Dense(units=1))
+
+        # Compile the model
+        model.compile(optimizer="adam", loss="mean_absolute_error")
+
+        return model
+
+    def fit_model(self, X_train, y_train, model):
+        model.fit(X_train, y_train, epochs=50, batch_size=64, verbose=1)
+
+    def add_predicted_columns(self, df, X_test, model):
+        y_pred = model.predict(X_test)
+        y_pred = self.scaler.inverse_transform(y_pred)
+        df["Predicted Close"] = [np.nan] * (
+            self.time_step + 1
+        ) + y_pred.flatten().tolist()
+        df["Predicted Returns"] = df["Predicted Close"].pct_change()
+
+        return df.reset_index()
 
     def create_columns(self, df):
         initial_values = {
@@ -65,29 +89,22 @@ class SMAVectorBacktester:
         return df
 
     def prepare_data(self, df):
-        df = self.calculate_moving_averages(df)
-        df = self.calculate_daily_returns(df)
+        df = self.calculate_daily_returns(self.df)
+        df_scaled = self.scaling_df(df)
+        X_data, y_data = self.create_dataset(df_scaled)
+        X_data_reshaped = self.reshape_x_input(X_data)
+        model = self.create_model(input_shape=(X_data_reshaped.shape[1], 1))
+        self.fit_model(X_data_reshaped, y_data, model)
+        df = self.add_predicted_columns(df, X_data_reshaped, model)
         df = self.create_columns(df)
         return df
 
     def buy_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] < df["SMA3"][i - 1]
-            and df["SMA2"][i] > df["SMA3"][i]
-            and df["SMA1"][i] > df["SMA2"][i]
-            and df["Close"][i] > df["SMA1"][i]
-            and self.in_position == False
-        ):
+        if df["Predicted Returns"][i] > 0.001 and self.in_position == False:
             return True
 
     def sell_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] > df["SMA3"][i - 1]
-            and df["SMA2"][i] < df["SMA3"][i]
-            and df["SMA1"][i] < df["SMA2"][i]
-            and df["Close"][i] < df["SMA1"][i]
-            and self.in_position == True
-        ):
+        if df["Predicted Returns"][i] < -0.015 and self.in_position == True:
             return True
 
     def backtest_strategy(self, df):
@@ -210,7 +227,9 @@ class SMAVectorBacktester:
         )
         return df
 
-    def reorganize_columns(self, df, additional_columns=["SMA1", "SMA2", "SMA3"]):
+    def reorganize_columns(
+        self, df, additional_columns=["Predicted Close", "Predicted Returns"]
+    ):
         target_columns = self.base_columns + additional_columns
         df = df[target_columns]
         df["Date"] = pd.to_datetime(df["Date"]).dt.date

@@ -1,57 +1,70 @@
 import math
 import pandas as pd
+import numpy as np
 from typing import Union
 from util.utility_functions import parse_cfg
 
 
-class SMAVectorBacktester:
+class SuperTrendVectorBacktester:
     def __init__(
         self,
         df: pd.DataFrame,
         initial_capital: Union[int, float],
         in_position: bool = False,
-        SMA1: int = 2,
-        SMA2: int = 3,
-        SMA3: int = 19,
+        period=8,
+        multiplier=2,
     ):
-        if not isinstance(df, pd.DataFrame) or df.empty:
-            raise ValueError("df must be a non-empty DataFrame")
-        if not "Close" in df.columns:
-            raise ValueError("No Close column found")
-        if not isinstance(initial_capital, (int, float)) or initial_capital <= 0:
-            raise ValueError("initial_capital must be a positive number")
-        if not isinstance(in_position, bool):
-            raise ValueError("in_position must be a boolean")
-        if not isinstance(SMA1, int) or SMA1 <= 0:
-            raise ValueError("SMA1 must be a positive integer")
-        if not isinstance(SMA2, int) or SMA2 <= 0:
-            raise ValueError("SMA2 must be a positive integer")
-        if not isinstance(SMA3, int) or SMA3 <= 0:
-            raise ValueError("SMA3 must be a positive integer")
-        if not SMA1 < SMA2 < SMA3:
-            raise ValueError("SMA1, SMA2, and SMA3 must be in ascending order")
-
-        self.df = df.drop(["Open", "High", "Low", "Volume"], axis=1)
-        self.SMA1 = SMA1
-        self.SMA2 = SMA2
-        self.SMA3 = SMA3
-        self.in_position = in_position
+        self.df = df
         self.initial_capital = initial_capital
+        self.in_position = in_position
+        self.period = period
+        self.multiplier = multiplier
         self.balance = self.initial_capital
         self.no_of_shares = 0
         self.base_columns = parse_cfg("./config/parameters.yaml")["base_columns"]
 
-    def calculate_moving_averages(self, df):
-        df["SMA1"] = df["Close"].rolling(window=self.SMA1).mean()
-        df["SMA2"] = df["Close"].rolling(window=self.SMA2).mean()
-        df["SMA3"] = df["Close"].rolling(window=self.SMA3).mean()
+    def calculate_atr(self, df):
+        df["High-Low"] = df["High"] - df["Low"]
+        df["High-PrevClose"] = abs(df["High"] - df["Close"].shift(1))
+        df["Low-PrevClose"] = abs(df["Low"] - df["Close"].shift(1))
+        df["TR"] = df[["High-Low", "High-PrevClose", "Low-PrevClose"]].max(axis=1)
+        df["ATR"] = df["TR"].rolling(self.period).mean()
+        return df
+
+    def calculate_supertrend(self, df):
+        self.calculate_atr(df)
+        hl2 = (df["High"] + df["Low"]) / 2
+        df["Final Upperband"] = hl2 + (self.multiplier * df["ATR"])
+        df["Final Lowerband"] = hl2 - (self.multiplier * df["ATR"])
+        df["Supertrend"] = np.nan
+
+        for current in range(1, len(df)):
+            previous = current - 1
+            if df["Close"].iloc[current] > df["Final Upperband"].iloc[previous]:
+                df.loc[current, "Supertrend"] = df["Final Lowerband"].iloc[current]
+            elif df["Close"].iloc[current] < df["Final Lowerband"].iloc[previous]:
+                df.loc[current, "Supertrend"] = df["Final Upperband"].iloc[current]
+            else:
+                df.loc[current, "Supertrend"] = df["Supertrend"].iloc[previous]
+                if (
+                    df["Supertrend"].iloc[current]
+                    == df["Final Upperband"].iloc[previous]
+                    and df["Close"].iloc[current] <= df["Final Upperband"].iloc[current]
+                ):
+                    df.loc[current, "Supertrend"] = df["Final Lowerband"].iloc[current]
+                elif (
+                    df["Supertrend"].iloc[current]
+                    == df["Final Lowerband"].iloc[previous]
+                    and df["Close"].iloc[current] >= df["Final Lowerband"].iloc[current]
+                ):
+                    df.loc[current, "Supertrend"] = df["Final Upperband"].iloc[current]
         return df
 
     def calculate_daily_returns(self, df):
         df["Market Returns"] = df["Close"].pct_change()
         return df
 
-    def create_columns(self, df):
+    def create_additional_columns(self, df):
         initial_values = {
             "In Position": (self.in_position, "bool"),
             "Balance": (self.balance, "float64"),
@@ -65,39 +78,28 @@ class SMAVectorBacktester:
         return df
 
     def prepare_data(self, df):
-        df = self.calculate_moving_averages(df)
+        df = self.calculate_supertrend(df)
         df = self.calculate_daily_returns(df)
-        df = self.create_columns(df)
+        df = self.create_additional_columns(df)
         return df
 
     def buy_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] < df["SMA3"][i - 1]
-            and df["SMA2"][i] > df["SMA3"][i]
-            and df["SMA1"][i] > df["SMA2"][i]
-            and df["Close"][i] > df["SMA1"][i]
-            and self.in_position == False
-        ):
+        if df["Close"][i] > df["Supertrend"][i] and not self.in_position:
             return True
 
     def sell_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] > df["SMA3"][i - 1]
-            and df["SMA2"][i] < df["SMA3"][i]
-            and df["SMA1"][i] < df["SMA2"][i]
-            and df["Close"][i] < df["SMA1"][i]
-            and self.in_position == True
-        ):
+        if df["Supertrend"][i] > df["Close"][i] and self.in_position:
             return True
 
     def backtest_strategy(self, df):
         for i in range(1, len(df)):
+            close_price = df.loc[i, "Close"]
             if self.buy_signal(df, i):
-                self.no_of_shares = math.floor(self.balance / df.loc[i, "Close"])
-                self.balance -= self.no_of_shares * df.loc[i, "Close"]
+                self.no_of_shares = math.floor(self.balance / close_price)
+                self.balance -= self.no_of_shares * close_price
                 self.in_position = True
             elif self.sell_signal(df, i):
-                self.balance += self.no_of_shares * df.loc[i, "Close"]
+                self.balance += self.no_of_shares * close_price
                 self.no_of_shares = 0
                 self.in_position = False
 
@@ -210,7 +212,7 @@ class SMAVectorBacktester:
         )
         return df
 
-    def reorganize_columns(self, df, additional_columns=["SMA1", "SMA2", "SMA3"]):
+    def reorganize_columns(self, df, additional_columns=["Supertrend"]):
         target_columns = self.base_columns + additional_columns
         df = df[target_columns]
         df["Date"] = pd.to_datetime(df["Date"]).dt.date

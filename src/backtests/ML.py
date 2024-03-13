@@ -1,18 +1,19 @@
-import math
 import pandas as pd
+import numpy as np
+import shap
+import math
 from typing import Union
+from lightgbm import LGBMClassifier
 from util.utility_functions import parse_cfg
 
 
-class SMAVectorBacktester:
+class MLClassifierVectorBacktester:
     def __init__(
         self,
         df: pd.DataFrame,
         initial_capital: Union[int, float],
         in_position: bool = False,
-        SMA1: int = 2,
-        SMA2: int = 3,
-        SMA3: int = 19,
+        shift_days: int = 10,
     ):
         if not isinstance(df, pd.DataFrame) or df.empty:
             raise ValueError("df must be a non-empty DataFrame")
@@ -22,34 +23,98 @@ class SMAVectorBacktester:
             raise ValueError("initial_capital must be a positive number")
         if not isinstance(in_position, bool):
             raise ValueError("in_position must be a boolean")
-        if not isinstance(SMA1, int) or SMA1 <= 0:
-            raise ValueError("SMA1 must be a positive integer")
-        if not isinstance(SMA2, int) or SMA2 <= 0:
-            raise ValueError("SMA2 must be a positive integer")
-        if not isinstance(SMA3, int) or SMA3 <= 0:
-            raise ValueError("SMA3 must be a positive integer")
-        if not SMA1 < SMA2 < SMA3:
-            raise ValueError("SMA1, SMA2, and SMA3 must be in ascending order")
+        if not isinstance(shift_days, int) or shift_days <= 0:
+            raise ValueError("shift_days must be a positive integer")
 
-        self.df = df.drop(["Open", "High", "Low", "Volume"], axis=1)
-        self.SMA1 = SMA1
-        self.SMA2 = SMA2
-        self.SMA3 = SMA3
+        self.df = df
         self.in_position = in_position
         self.initial_capital = initial_capital
         self.balance = self.initial_capital
         self.no_of_shares = 0
+        self.shift_days = shift_days
         self.base_columns = parse_cfg("./config/parameters.yaml")["base_columns"]
-
-    def calculate_moving_averages(self, df):
-        df["SMA1"] = df["Close"].rolling(window=self.SMA1).mean()
-        df["SMA2"] = df["Close"].rolling(window=self.SMA2).mean()
-        df["SMA3"] = df["Close"].rolling(window=self.SMA3).mean()
-        return df
 
     def calculate_daily_returns(self, df):
         df["Market Returns"] = df["Close"].pct_change()
         return df
+
+    def calculate_technical_indicators(self, data):
+        data["SMA50"] = data["Close"].rolling(window=50).mean()
+        data["EMA50"] = data["Close"].ewm(span=50, adjust=False).mean()
+
+        # RSI
+        delta = data["Close"].diff(1)
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        data["RSI"] = 100 - (100 / (1 + rs))
+
+        # MACD
+        exp1 = data["Close"].ewm(span=12, adjust=False).mean()
+        exp2 = data["Close"].ewm(span=26, adjust=False).mean()
+        data["MACD"] = exp1 - exp2
+
+        # ATR
+        high_low = data["High"] - data["Low"]
+        high_close = (data["High"] - data["Close"].shift()).abs()
+        low_close = (data["Low"] - data["Close"].shift()).abs()
+        ranges = pd.concat([high_low, high_close, low_close], axis=1)
+        true_range = ranges.max(axis=1)
+        data["ATR"] = true_range.rolling(window=14).mean()
+
+        # Bollinger Bands
+        data["Middle_BB"] = data["Close"].rolling(window=20).mean()
+        data["Upper_BB"] = (
+            data["Middle_BB"] + 2 * data["Close"].rolling(window=20).std()
+        )
+        data["Lower_BB"] = (
+            data["Middle_BB"] - 2 * data["Close"].rolling(window=20).std()
+        )
+
+        # OBV
+        data["OBV"] = (
+            (np.sign(data["Close"].diff()) * data["Volume"]).fillna(0).cumsum()
+        )
+
+        # VWAP (assuming intraday data is available)
+        data["VWAP"] = (
+            data["Volume"] * (data["High"] + data["Low"] + data["Close"]) / 3
+        ).cumsum() / data["Volume"].cumsum()
+
+        return data
+
+    def create_target(self, data):
+        data["Future_Close"] = data["Close"].shift(-self.shift_days)
+        data["Target"] = (data["Future_Close"] > data["Close"]).astype(int)
+        return data
+
+    def predictor_response_split(self, data):
+        X = data.drop(
+            ["Symbol", "Market Returns", "Date", "Future_Close", "Target"], axis=1
+        )
+        y = data["Target"]
+        return X, y
+
+    def fit_classifier(self, X, y):
+        self.model = LGBMClassifier()
+        self.model.fit(X, y)
+
+    def calculate_shap_values(self, X):
+        explainer = shap.TreeExplainer(self.model)
+        shap_values = explainer.shap_values(X)
+        return shap_values
+
+    def create_shap_df(self, X, shap_values):
+        shap_df = pd.DataFrame(
+            list(zip(X.columns, np.abs(shap_values).mean(0))),
+            columns=["col_name", "shap_values"],
+        )
+        shap_df.sort_values(by="shap_values", ascending=False, inplace=True)
+        return shap_df
+
+    def get_top_n_features(self, shap_df, n=5):
+        top_features = shap_df["col_name"][:n].tolist()
+        return top_features
 
     def create_columns(self, df):
         initial_values = {
@@ -64,39 +129,31 @@ class SMAVectorBacktester:
 
         return df
 
-    def prepare_data(self, df):
-        df = self.calculate_moving_averages(df)
-        df = self.calculate_daily_returns(df)
-        df = self.create_columns(df)
-        return df
+    def prepare_data(self, data):
+        data = self.calculate_daily_returns(data)
+        data = self.calculate_technical_indicators(data)
+        data = self.create_target(data)
+        X, y = self.predictor_response_split(data)
+        self.fit_classifier(X, y)
+        shap_values = self.calculate_shap_values(X)
+        shap_df = self.create_shap_df(X, shap_values)
+        top_features = self.get_top_n_features(shap_df)
+        data = self.create_columns(data)
+        return data, top_features, shap_df
 
-    def buy_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] < df["SMA3"][i - 1]
-            and df["SMA2"][i] > df["SMA3"][i]
-            and df["SMA1"][i] > df["SMA2"][i]
-            and df["Close"][i] > df["SMA1"][i]
-            and self.in_position == False
-        ):
-            return True
-
-    def sell_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] > df["SMA3"][i - 1]
-            and df["SMA2"][i] < df["SMA3"][i]
-            and df["SMA1"][i] < df["SMA2"][i]
-            and df["Close"][i] < df["SMA1"][i]
-            and self.in_position == True
-        ):
-            return True
-
-    def backtest_strategy(self, df):
-        for i in range(1, len(df)):
-            if self.buy_signal(df, i):
+    def backtest_strategy(self, df, selected_features):
+        self.model = LGBMClassifier()
+        self.model.fit(df[selected_features], df["Target"])
+        for i, row in df.iterrows():
+            prob_negative, prob_positive = self.model.predict_proba(
+                [row[selected_features].values]
+            )[0]
+            if prob_positive > 0.9 and self.in_position == False:
                 self.no_of_shares = math.floor(self.balance / df.loc[i, "Close"])
                 self.balance -= self.no_of_shares * df.loc[i, "Close"]
                 self.in_position = True
-            elif self.sell_signal(df, i):
+
+            elif prob_negative > (1 - 0.1) and self.in_position == True:
                 self.balance += self.no_of_shares * df.loc[i, "Close"]
                 self.no_of_shares = 0
                 self.in_position = False
@@ -210,7 +267,7 @@ class SMAVectorBacktester:
         )
         return df
 
-    def reorganize_columns(self, df, additional_columns=["SMA1", "SMA2", "SMA3"]):
+    def reorganize_columns(self, df, additional_columns=[]):
         target_columns = self.base_columns + additional_columns
         df = df[target_columns]
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
@@ -218,8 +275,8 @@ class SMAVectorBacktester:
 
     def backtesting_flow(self):
         df = self.df.copy().reset_index()
-        df = self.prepare_data(df)
-        df = self.backtest_strategy(df)
+        df, selected_features, shap_df = self.prepare_data(df)
+        df = self.backtest_strategy(df, selected_features)
         df = self.post_process(df)
         df = self.reorganize_columns(df)
-        return df
+        return df, shap_df

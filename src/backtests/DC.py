@@ -1,18 +1,18 @@
 import math
 import pandas as pd
+import pandas_ta as ta
 from typing import Union
 from util.utility_functions import parse_cfg
 
 
-class SMAVectorBacktester:
+class DonchianChannelVectorBacktester:
     def __init__(
         self,
         df: pd.DataFrame,
         initial_capital: Union[int, float],
         in_position: bool = False,
-        SMA1: int = 2,
-        SMA2: int = 3,
-        SMA3: int = 19,
+        lower_length: int = 4,
+        upper_length: int = 2,
     ):
         if not isinstance(df, pd.DataFrame) or df.empty:
             raise ValueError("df must be a non-empty DataFrame")
@@ -22,29 +22,24 @@ class SMAVectorBacktester:
             raise ValueError("initial_capital must be a positive number")
         if not isinstance(in_position, bool):
             raise ValueError("in_position must be a boolean")
-        if not isinstance(SMA1, int) or SMA1 <= 0:
+        if not isinstance(lower_length, int) or lower_length <= 0:
             raise ValueError("SMA1 must be a positive integer")
-        if not isinstance(SMA2, int) or SMA2 <= 0:
+        if not isinstance(upper_length, int) or upper_length <= 0:
             raise ValueError("SMA2 must be a positive integer")
-        if not isinstance(SMA3, int) or SMA3 <= 0:
-            raise ValueError("SMA3 must be a positive integer")
-        if not SMA1 < SMA2 < SMA3:
-            raise ValueError("SMA1, SMA2, and SMA3 must be in ascending order")
 
-        self.df = df.drop(["Open", "High", "Low", "Volume"], axis=1)
-        self.SMA1 = SMA1
-        self.SMA2 = SMA2
-        self.SMA3 = SMA3
+        self.df = df
+        self.lower_length = lower_length
+        self.upper_length = upper_length
         self.in_position = in_position
         self.initial_capital = initial_capital
         self.balance = self.initial_capital
         self.no_of_shares = 0
         self.base_columns = parse_cfg("./config/parameters.yaml")["base_columns"]
 
-    def calculate_moving_averages(self, df):
-        df["SMA1"] = df["Close"].rolling(window=self.SMA1).mean()
-        df["SMA2"] = df["Close"].rolling(window=self.SMA2).mean()
-        df["SMA3"] = df["Close"].rolling(window=self.SMA3).mean()
+    def calculate_dc_bands(self, df):
+        df[["dcl", "dcm", "dcu"]] = df.ta.donchian(
+            lower_length=self.lower_length, upper_length=self.upper_length
+        )
         return df
 
     def calculate_daily_returns(self, df):
@@ -65,29 +60,17 @@ class SMAVectorBacktester:
         return df
 
     def prepare_data(self, df):
-        df = self.calculate_moving_averages(df)
+        df = self.calculate_dc_bands(df)
         df = self.calculate_daily_returns(df)
         df = self.create_columns(df)
         return df
 
     def buy_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] < df["SMA3"][i - 1]
-            and df["SMA2"][i] > df["SMA3"][i]
-            and df["SMA1"][i] > df["SMA2"][i]
-            and df["Close"][i] > df["SMA1"][i]
-            and self.in_position == False
-        ):
+        if df["High"][i] == df["dcu"][i] and self.in_position == False:
             return True
 
     def sell_signal(self, df, i):
-        if (
-            df["SMA2"][i - 1] > df["SMA3"][i - 1]
-            and df["SMA2"][i] < df["SMA3"][i]
-            and df["SMA1"][i] < df["SMA2"][i]
-            and df["Close"][i] < df["SMA1"][i]
-            and self.in_position == True
-        ):
+        if df["Low"][i] == df["dcl"][i] and self.in_position == True:
             return True
 
     def backtest_strategy(self, df):
@@ -210,7 +193,7 @@ class SMAVectorBacktester:
         )
         return df
 
-    def reorganize_columns(self, df, additional_columns=["SMA1", "SMA2", "SMA3"]):
+    def reorganize_columns(self, df, additional_columns=["dcl", "dcm", "dcu"]):
         target_columns = self.base_columns + additional_columns
         df = df[target_columns]
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
