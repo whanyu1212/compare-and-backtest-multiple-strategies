@@ -1,5 +1,6 @@
 import yaml
 import streamlit as st
+import plotly.express as px
 import plotly.graph_objects as go
 from fetch_data import FinancialDataExtractor
 
@@ -28,8 +29,13 @@ def load_css(file_name):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 
-import plotly.graph_objects as go
-import streamlit as st
+def create_container(column, title, value):
+    with column:
+        with st.container(height=100):
+            st.markdown(
+                f"<h2 style='text-align: center; font-family: Space Grotesk;font-size: 14px;'>{title}: <br> {value} </h2>",
+                unsafe_allow_html=True,
+            )
 
 
 def plot_candlestick_with_indicators(df, indicators):
@@ -126,7 +132,7 @@ def plot_capital_changes(data, strategy_color, hold_color):
     fig.add_trace(
         go.Scatter(
             x=data.Date,
-            y=data["Total Strategy Capital"],
+            y=data["Total Strategy Portfolio Value"],
             mode="lines",
             name="Strategy",
             line=dict(color=strategy_color, width=3),
@@ -136,7 +142,7 @@ def plot_capital_changes(data, strategy_color, hold_color):
     fig.add_trace(
         go.Scatter(
             x=data.Date,
-            y=data["Total Buy and Hold Capital"],
+            y=data["Buy and Hold Portfolio Value"],
             mode="lines",
             name="Buy and Hold",
             line=dict(color=hold_color, width=3),
@@ -146,10 +152,10 @@ def plot_capital_changes(data, strategy_color, hold_color):
     fig.add_trace(
         go.Scatter(
             x=data[data["Signal"] == "Buy"].Date,
-            y=data[data["Signal"] == "Buy"]["Total Strategy Capital"],
+            y=data[data["Signal"] == "Buy"]["Total Strategy Portfolio Value"],
             mode="markers",
             name="Buy",
-            marker=dict(color="green", size=5),
+            marker=dict(color="green", size=8, symbol="triangle-up"),
         )
     )
 
@@ -157,10 +163,10 @@ def plot_capital_changes(data, strategy_color, hold_color):
     fig.add_trace(
         go.Scatter(
             x=data[data["Signal"] == "Sell"].Date,
-            y=data[data["Signal"] == "Sell"]["Total Strategy Capital"],
+            y=data[data["Signal"] == "Sell"]["Total Strategy Portfolio Value"],
             mode="markers",
             name="Sell",
-            marker=dict(color="red", size=5),
+            marker=dict(color="red", size=8, symbol="triangle-down"),
         )
     )
 
@@ -227,3 +233,161 @@ def plot_drawdown_comparison(sma_df):
         yaxis_title="Drawdown",
     )
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_dc_trend(data, close_width, dc_width):
+    trace_close = go.Scatter(
+        x=data["Date"][:100],
+        y=data["Close"][:100],
+        mode="lines",
+        name="GOOGL",
+        line=dict(width=close_width),
+    )
+
+    trace_dc1 = go.Scatter(
+        x=data["Date"][:100],
+        y=data["dcl"][:100],
+        mode="lines",
+        name="dcl",
+        line=dict(dash="dot", width=dc_width),
+    )
+
+    trace_dc2 = go.Scatter(
+        x=data["Date"][:100],
+        y=data["dcm"][:100],
+        mode="lines",
+        name="dcm",
+        line=dict(dash="dot", width=dc_width),
+    )
+
+    trace_dc3 = go.Scatter(
+        x=data["Date"][:100],
+        y=data["dcu"][:100],
+        mode="lines",
+        name="dcu",
+        line=dict(dash="dot", width=dc_width),
+    )
+
+    layout = go.Layout(
+        title="Trend with DC Lines (first 100 points)",
+        xaxis_title="Date",
+        yaxis_title="Price",
+    )
+
+    fig = go.Figure(data=[trace_close, trace_dc1, trace_dc2, trace_dc3], layout=layout)
+
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_supertrend(data, close_width, supertrend_width):
+    trace_close = go.Scatter(
+        x=data["Date"][:100],
+        y=data["Close"][:100],
+        mode="lines",
+        name="META",
+        line=dict(width=close_width),
+    )
+
+    trace_supertrend = go.Scatter(
+        x=data["Date"][:100],
+        y=data["Supertrend"][:100],
+        mode="lines",
+        name="Supertrend",
+        line=dict(dash="dot", width=supertrend_width),
+    )
+
+    layout = go.Layout(
+        title="Trend with Supertrend (first 100 points)",
+        xaxis_title="Date",
+        yaxis_title="Price",
+    )
+
+    fig = go.Figure(data=[trace_close, trace_supertrend], layout=layout)
+
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_shap_bar_chart(importance_df):
+    fig = px.bar(
+        importance_df,
+        x="shap_values",
+        y="col_name",
+        orientation="h",
+        title="Feature Importance based on SHAP values",
+        color="shap_values",
+        labels={"shap_values": "SHAP Importance", "col_name": "features"},
+        color_continuous_scale="Blues",
+    )
+
+    fig.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+import plotly.graph_objects as go
+import streamlit as st
+
+
+def plot_returns_vs_volatility(
+    portfolio_vol_list,
+    portfolio_ret_list,
+    sharpe_ratio_list,
+    max_sharpe_vol,
+    max_sharpe_ret,
+):
+    fig = go.Figure()
+
+    # Add the scatter plot
+    fig.add_trace(
+        go.Scatter(
+            x=portfolio_vol_list,
+            y=portfolio_ret_list,
+            mode="markers",
+            marker=dict(
+                size=8,
+                color=sharpe_ratio_list,  # set color to an array/list of desired values
+                colorscale="Viridis",  # choose a colorscale
+                colorbar=dict(title="Sharpe Ratio"),
+                showscale=False,
+            ),
+            name="Portfolios",
+        )
+    )
+
+    # Add a marker for the point with the highest Sharpe ratio
+    fig.add_trace(
+        go.Scatter(
+            x=[max_sharpe_vol],
+            y=[max_sharpe_ret],
+            mode="markers",
+            marker=dict(size=10, color="Red", symbol="star"),
+            name="Max Sharpe Ratio",
+        )
+    )
+
+    # Add labels and title
+    fig.update_layout(
+        title="Returns vs Volatility", xaxis_title="Volatility", yaxis_title="Returns"
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_portfolio_weights(symbols, max_sharpe_w):
+    values = [i * 100 for i in list(max_sharpe_w)]  # Convert weights to percentages
+
+    fig = go.Figure(data=[go.Pie(labels=symbols, values=values, hole=0.5)])
+
+    fig.update_layout(
+        title_text="Portfolio Weights in % - MAANG",
+        annotations=[
+            dict(
+                text="",
+                x=0.5,
+                y=0.5,
+                font_size=20,
+                showarrow=False,
+            )
+        ],
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
