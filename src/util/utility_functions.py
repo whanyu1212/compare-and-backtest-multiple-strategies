@@ -1,4 +1,5 @@
 import yaml
+import math
 import numpy as np
 import streamlit as st
 import plotly.express as px
@@ -59,6 +60,25 @@ def calculate_metrics(
     )
 
 
+def calculate_sp500_portfolio_value(benchmark_df, initial_capital):
+    benchmark_df["Market Returns"] = benchmark_df["Close"].pct_change()
+    left_over = (
+        float(initial_capital)
+        - math.floor(float(initial_capital) / benchmark_df.loc[0, "Close"])
+        * benchmark_df.loc[0, "Close"]
+    )
+    benchmark_df["No of shares"] = math.floor(
+        float(initial_capital) / benchmark_df.loc[0, "Close"]
+    )
+    benchmark_df["Buy and Hold Portfolio Value"] = (
+        benchmark_df["No of shares"] * benchmark_df["Close"] + left_over
+    )
+    benchmark_df["Buy and Hold Portfolio Value"].fillna(
+        float(initial_capital), inplace=True
+    )
+    return benchmark_df
+
+
 def load_css(file_name):
     with open(file_name) as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
@@ -117,93 +137,76 @@ def plot_candlestick_with_indicators(df, indicators):
 
 
 def plot_sma_trend(data, close_width, sma_width):
-    trace_close = go.Scatter(
-        x=data["Date"][:100],
-        y=data["Close"][:100],
-        mode="lines",
-        name="AAPL",
-        line=dict(width=close_width),
-    )
+    traces = []
+    labels = ["AAPL", "SMA Short", "SMA Medium", "SMA Long"]
+    columns = ["Close", "SMA1", "SMA2", "SMA3"]
+    widths = [close_width, sma_width, sma_width, sma_width]
 
-    trace_sma1 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["SMA1"][:100],
-        mode="lines",
-        name="SMA Short",
-        line=dict(dash="dot", width=sma_width),
-    )
-
-    trace_sma2 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["SMA2"][:100],
-        mode="lines",
-        name="SMA Medium",
-        line=dict(dash="dot", width=sma_width),
-    )
-
-    trace_sma3 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["SMA3"][:100],
-        mode="lines",
-        name="SMA Long",
-        line=dict(dash="dot", width=sma_width),
-    )
+    for label, column, width in zip(labels, columns, widths):
+        trace = go.Scatter(
+            x=data["Date"][-100:],
+            y=data[column][-100:],
+            mode="lines",
+            name=label,
+            line=dict(dash="dot" if "SMA" in label else None, width=width),
+        )
+        traces.append(trace)
 
     layout = go.Layout(
-        title="Trend with SMA Lines (first 100 points)",
+        title="Trend with SMA Lines (last 100 days)",
         xaxis_title="Date",
         yaxis_title="Price",
     )
 
-    fig = go.Figure(
-        data=[trace_close, trace_sma1, trace_sma2, trace_sma3], layout=layout
-    )
+    fig = go.Figure(data=traces, layout=layout)
 
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
 
+def create_trace(x, y, mode, name, line=None, marker=None):
+    return go.Scatter(x=x, y=y, mode=mode, name=name, line=line, marker=marker)
+
+
 def plot_capital_changes(data, strategy_color, hold_color):
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=data.Date,
-            y=data["Total Strategy Portfolio Value"],
-            mode="lines",
-            name="Strategy",
-            line=dict(color=strategy_color, width=3),
-        )
-    )
 
-    fig.add_trace(
-        go.Scatter(
-            x=data.Date,
-            y=data["Buy and Hold Portfolio Value"],
-            mode="lines",
-            name="Buy and Hold",
-            line=dict(color=hold_color, width=3),
-        )
-    )
+    traces = [
+        (
+            data.Date,
+            data["Total Strategy Portfolio Value"],
+            "lines",
+            "Strategy",
+            dict(color=strategy_color, width=3),
+            None,
+        ),
+        (
+            data.Date,
+            data["Buy and Hold Portfolio Value"],
+            "lines",
+            "Buy and Hold",
+            dict(color=hold_color, width=3),
+            None,
+        ),
+        (
+            data[data["Signal"] == "Buy"].Date,
+            data[data["Signal"] == "Buy"]["Total Strategy Portfolio Value"],
+            "markers",
+            "Buy",
+            None,
+            dict(color="green", size=8, symbol="triangle-up", opacity=0.5),
+        ),
+        (
+            data[data["Signal"] == "Sell"].Date,
+            data[data["Signal"] == "Sell"]["Total Strategy Portfolio Value"],
+            "markers",
+            "Sell",
+            None,
+            dict(color="red", size=8, symbol="triangle-down", opacity=0.5),
+        ),
+    ]
 
-    fig.add_trace(
-        go.Scatter(
-            x=data[data["Signal"] == "Buy"].Date,
-            y=data[data["Signal"] == "Buy"]["Total Strategy Portfolio Value"],
-            mode="markers",
-            name="Buy",
-            marker=dict(color="green", size=8, symbol="triangle-up"),
-        )
-    )
-
-    # Add markers for 'sell' signals
-    fig.add_trace(
-        go.Scatter(
-            x=data[data["Signal"] == "Sell"].Date,
-            y=data[data["Signal"] == "Sell"]["Total Strategy Portfolio Value"],
-            mode="markers",
-            name="Sell",
-            marker=dict(color="red", size=8, symbol="triangle-down"),
-        )
-    )
+    for trace in traces:
+        fig.add_trace(create_trace(*trace))
 
     fig.update_layout(
         title="Capital Change Comparison",
@@ -213,55 +216,31 @@ def plot_capital_changes(data, strategy_color, hold_color):
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
 
-def plot_profit_loss(data, realized_color, unrealized_color):
+def plot_drawdown_comparison(df):
     fig = go.Figure()
-    fig.add_trace(
-        go.Bar(
-            x=data.Date,
-            y=data["Realized PnL"],
-            name="Realized Profit & Loss",
-            marker_color=realized_color,
-        )
-    )
-    fig.add_trace(
-        go.Bar(
-            x=data.Date,
-            y=data["Unrealized PnL"],
-            name="Unrealized Profit & Loss",
-            marker_color=unrealized_color,
-        )
-    )
 
-    fig.update_layout(
-        title="Realized / Unrealized Profit & Loss over time",
-        xaxis_title="Date",
-        yaxis_title="Profit / Loss",
-        barmode="group",
-        xaxis_tickangle=-45,
-        xaxis=dict(rangeslider=dict(visible=False), type="date"),
-    )
+    traces = [
+        (
+            df["Date"],
+            df["Strategy Drawdown"],
+            "lines",
+            "Strategy Drawdown",
+            dict(color="skyblue"),
+            None,
+        ),
+        (
+            df["Date"],
+            df["Buy and Hold Drawdown"],
+            "lines",
+            "Buy and Hold Drawdown",
+            dict(color="dodgerblue"),
+            None,
+        ),
+    ]
 
-    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+    for trace in traces:
+        fig.add_trace(create_trace(*trace))
 
-
-def plot_drawdown_comparison(sma_df):
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=sma_df["Date"],
-            y=sma_df["Strategy Drawdown"],
-            name="Strategy Drawdown",
-            line=dict(color="skyblue"),
-        )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=sma_df["Date"],
-            y=sma_df["Buy and Hold Drawdown"],
-            name="Buy and Hold Drawdown",
-            line=dict(color="dodgerblue"),
-        )
-    )
     fig.update_layout(
         title="Drawdown Comparison",
         xaxis_title="Date",
@@ -271,73 +250,111 @@ def plot_drawdown_comparison(sma_df):
 
 
 def plot_dc_trend(data, close_width, dc_width):
-    trace_close = go.Scatter(
-        x=data["Date"][:100],
-        y=data["Close"][:100],
-        mode="lines",
-        name="GOOGL",
-        line=dict(width=close_width),
-    )
+    traces = [
+        (
+            data["Date"][-100:],
+            data["Close"][-100:],
+            "lines",
+            "NFLX",
+            dict(width=close_width),
+            None,
+        ),
+        (
+            data["Date"][-100:],
+            data["dcl"][-100:],
+            "lines",
+            "dcl",
+            dict(dash="dot", width=dc_width),
+            None,
+        ),
+        (
+            data["Date"][-100:],
+            data["dcm"][-100:],
+            "lines",
+            "dcm",
+            dict(dash="dot", width=dc_width),
+            None,
+        ),
+        (
+            data["Date"][-100:],
+            data["dcu"][-100:],
+            "lines",
+            "dcu",
+            dict(dash="dot", width=dc_width),
+            None,
+        ),
+    ]
 
-    trace_dc1 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["dcl"][:100],
-        mode="lines",
-        name="dcl",
-        line=dict(dash="dot", width=dc_width),
-    )
+    fig = go.Figure(data=[create_trace(*trace) for trace in traces])
 
-    trace_dc2 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["dcm"][:100],
-        mode="lines",
-        name="dcm",
-        line=dict(dash="dot", width=dc_width),
-    )
-
-    trace_dc3 = go.Scatter(
-        x=data["Date"][:100],
-        y=data["dcu"][:100],
-        mode="lines",
-        name="dcu",
-        line=dict(dash="dot", width=dc_width),
-    )
-
-    layout = go.Layout(
-        title="Trend with DC Lines (first 100 points)",
+    fig.update_layout(
+        title="Trend with DC Lines (last 100 days)",
         xaxis_title="Date",
         yaxis_title="Price",
     )
-
-    fig = go.Figure(data=[trace_close, trace_dc1, trace_dc2, trace_dc3], layout=layout)
-
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
 
 def plot_supertrend(data, close_width, supertrend_width):
-    trace_close = go.Scatter(
-        x=data["Date"][:100],
-        y=data["Close"][:100],
-        mode="lines",
-        name="META",
-        line=dict(width=close_width),
-    )
+    traces = [
+        (
+            data["Date"][-100:],
+            data["Close"][-100:],
+            "lines",
+            "META",
+            dict(width=close_width),
+            None,
+        ),
+        (
+            data["Date"][-100:],
+            data["Supertrend"][-100:],
+            "lines",
+            "Supertrend",
+            dict(dash="dot", width=supertrend_width),
+            None,
+        ),
+    ]
 
-    trace_supertrend = go.Scatter(
-        x=data["Date"][:100],
-        y=data["Supertrend"][:100],
-        mode="lines",
-        name="Supertrend",
-        line=dict(dash="dot", width=supertrend_width),
-    )
+    fig = go.Figure(data=[create_trace(*trace) for trace in traces])
 
-    layout = go.Layout(
-        title="Trend with Supertrend (first 100 points)",
+    fig.update_layout(
+        title="Trend with Supertrend (last 100 days)",
         xaxis_title="Date",
         yaxis_title="Price",
     )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
-    fig = go.Figure(data=[trace_close, trace_supertrend], layout=layout)
+
+def plot_stock_price_prediction(y_train, y_pred):
+    fig = go.Figure()
+
+    traces = [
+        (
+            list(range(len(y_train))),
+            y_train,
+            "lines",
+            "Actual",
+            dict(color="blue", width=3),
+            None,
+        ),
+        (
+            list(range(len(y_pred))),
+            y_pred,
+            "lines",
+            "Predicted",
+            dict(color="orange", width=1.5),
+            None,
+        ),
+    ]
+
+    for trace in traces:
+        fig.add_trace(create_trace(*trace))
+
+    fig.update_layout(
+        title="NTLX Stock Price Prediction",
+        xaxis_title="Days",
+        yaxis_title="Stock Price",
+    )
 
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
 
@@ -356,10 +373,6 @@ def plot_shap_bar_chart(importance_df):
 
     fig.update_layout(yaxis={"categoryorder": "total ascending"})
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-
-
-import plotly.graph_objects as go
-import streamlit as st
 
 
 def plot_returns_vs_volatility(
@@ -426,3 +439,36 @@ def plot_portfolio_weights(symbols, max_sharpe_w):
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+
+def plot_capital_change_vs_benchmark(strategy_df, benchmark_df):
+    fig = go.Figure()
+
+    traces = [
+        (
+            strategy_df["Date"],
+            strategy_df["Total Strategy Portfolio Value"],
+            "lines",
+            "Strategy Capital Change",
+            None,
+            None,
+        ),
+        (
+            benchmark_df["Date"],
+            benchmark_df["Buy and Hold Portfolio Value"],
+            "lines",
+            "SP500 Benchmark",
+            None,
+            None,
+        ),
+    ]
+
+    for trace in traces:
+        fig.add_trace(create_trace(*trace))
+
+    fig.update_layout(
+        title="Capital Change vs Benchmark",
+        xaxis_title="Date",
+        yaxis_title="Capital",
+    )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
