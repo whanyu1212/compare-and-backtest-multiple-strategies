@@ -1,16 +1,15 @@
 import streamlit as st
-import math
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from streamlit_lottie import st_lottie
-from loguru import logger
-from colorama import Fore, Style
 from annotated_text import annotated_text
 from datetime import datetime
 from util.utility_functions import (
+    parse_cfg,
     load_css,
     calculate_metrics,
+    calculate_sp500_portfolio_value,
     create_container,
     plot_sma_trend,
     plot_dc_trend,
@@ -20,6 +19,8 @@ from util.utility_functions import (
     plot_shap_bar_chart,
     plot_returns_vs_volatility,
     plot_portfolio_weights,
+    plot_stock_price_prediction,
+    plot_capital_change_vs_benchmark,
 )
 from util.st_column_config import sma_column_config
 from backtests.SuperTrend import SuperTrendVectorBacktester
@@ -31,11 +32,18 @@ from portfolio_stats import PortfolioStatistics
 from fetch_data import FinancialDataExtractor
 from streamlit_extras.metric_cards import style_metric_cards
 import plotly.graph_objects as go
-from lightweight_charts.widgets import StreamlitChart
+from util.descriptions import (
+    get_supertrend_description,
+    get_sma_description,
+    get_donchian_description,
+    get_ml_strategy_description,
+    get_lstm_strategy_description,
+)
+from monte_carlo import monte_carlo_optimize_portfolio
 
 st.set_page_config(layout="wide")
 
-symbols = ["META", "AAPL", "AMZN", "NFLX", "GOOGL"]
+symbols = parse_cfg("./config/parameters.yaml")["symbols"]
 
 
 load_css("./src/style.css")
@@ -43,13 +51,8 @@ load_css("./src/style.css")
 
 sidebar = st.sidebar
 with sidebar:
-    st.subheader("Chart Settings")
+    st.subheader("Settings")
     st.divider()
-    option = st.selectbox(
-        "Pick the stock to update the chart",
-        symbols,
-    )
-    st.text("")
     initial_capital = st.text_input(
         "Starting Capital (Please enter a valid number)", 100000
     )
@@ -60,7 +63,7 @@ with sidebar:
     )
     st.text("")
     interval = st.selectbox("Select the interval", ["1d", "1wk", "1mo"])
-    button_clicked = st.sidebar.button("Update Chart")
+    button_clicked = st.sidebar.button("Load data")
 
     for _ in range(5):
         st.text("")
@@ -82,32 +85,21 @@ extractor = FinancialDataExtractor(
     symbols=symbols,
     start=date_range[0].strftime("%Y-%m-%d"),
     end=date_range[1].strftime("%Y-%m-%d"),
-    interval="1d",
+    interval=interval,
 )
 benchmark_extractor = FinancialDataExtractor(
     symbols=["SPY"],
     start=date_range[0].strftime("%Y-%m-%d"),
     end=date_range[1].strftime("%Y-%m-%d"),
-    interval="1d",
+    interval=interval,
 )
+
+df = extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
+
 benchmark_df = benchmark_extractor.data.drop(
     ["Dividends", "Stock Splits"], axis=1
 ).reset_index()
-benchmark_df["Market Returns"] = benchmark_df["Close"].pct_change()
-left_over = (
-    float(initial_capital)
-    - math.floor(float(initial_capital) / benchmark_df.loc[0, "Close"])
-    * benchmark_df.loc[0, "Close"]
-)
-benchmark_df["Buy and Hold Portfolio Value"] = (
-    float(initial_capital) * (1 + benchmark_df["Market Returns"]).cumprod() + left_over
-)
-benchmark_df["Buy and Hold Portfolio Value"].fillna(
-    float(initial_capital), inplace=True
-)
 
-
-df = extractor.data.drop(["Dividends", "Stock Splits"], axis=1)
 
 col1, col2, col3, col4, col5, col6 = st.columns([1.5, 1, 1, 1, 1, 1])
 
@@ -132,10 +124,10 @@ for symbol, column in zip(symbols, columns):
         percentage_string,
     )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
+
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
     [
-        "Pricing Visuals",
-        "Portfolio Optimization",
+        "Portfolio Allocation",
         "SuperTrend Strategy",
         "Triple SMA Crossover Strategy",
         "Donchian Channel Strategy",
@@ -146,584 +138,440 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs(
 )
 
 style_metric_cards(border_left_color="#ADD8E6")
+
+
 with tab1:
     if button_clicked:
-        with st.container():
-            chart = StreamlitChart(height=500)
-            chart.grid(vert_enabled=True, horz_enabled=True)
+        st.header("Generating Initial Portfolio Weights")
+        with st.spinner("Running Monte Carlo Simulation..."):
 
-            chart.layout(
-                background_color="#131722", font_family="Trebuchet MS", font_size=16
+            d = {}
+            for ticker in symbols:
+                d[ticker] = df.query(f"Symbol=='{ticker}'")["Close"].tolist()
+            price_df = pd.DataFrame(d)
+
+            (
+                max_sharpe,
+                max_sharpe_vol,
+                max_sharpe_ret,
+                max_sharpe_w,
+                portfolio_vol_list,
+                portfolio_ret_list,
+                w_list,
+                sharpe_ratio_list,
+            ) = monte_carlo_optimize_portfolio(price_df, symbols)
+
+            weights_d = {symbols[i]: max_sharpe_w[i] for i in range(len(symbols))}
+
+            st.json(
+                {
+                    "Portfolio with maximum Sharpe Ratio": max_sharpe,
+                    "Return": max_sharpe_ret,
+                    "Volatility": max_sharpe_vol,
+                    "Weights": max_sharpe_w,
+                }
             )
 
-            chart.candle_style(
-                up_color="#2962ff",
-                down_color="#e91e63",
-                border_up_color="#2962ffcb",
-                border_down_color="#e91e63cb",
-                wick_up_color="#2962ffcb",
-                wick_down_color="#e91e63cb",
-            )
-
-            chart.volume_config(up_color="#2962ffcb", down_color="#e91e63cb")
-            chart.legend(
-                visible=True, font_family="Trebuchet MS", ohlc=True, percent=True
-            )
-
-            chart.set(df.query(f"Symbol == '{option}'"))
-            chart.load()
-            st.divider()
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_returns_vs_volatility(
+                    portfolio_vol_list,
+                    portfolio_ret_list,
+                    sharpe_ratio_list,
+                    max_sharpe_vol,
+                    max_sharpe_ret,
+                )
+            with col2:
+                plot_portfolio_weights(symbols, max_sharpe_w)
     else:
         st.info(
-            "Please click on the Update Chart button to load the candlestick chart for the selected stock",
+            "Please click on the Load Data button to start analyzing the selected stocks",
             icon="ℹ️",
         )
 
 with tab2:
-    st.header("Generating Initial Portfolio Weights")
-    progress_text = "Calculating in progress. Please wait...."
-    my_bar = st.progress(0, text=progress_text)
-    d = {}
-    for ticker in symbols:
-        d[ticker] = df.query(f"Symbol=='{ticker}'")["Close"].tolist()
-    price_df = pd.DataFrame(d)
-    np.random.seed(42)
-    num_iter = 10000
-
-    sharpe_ratio_list = []
-    portfolio_ret_list = []
-    portfolio_vol_list = []
-    w_list = []
-
-    max_sharpe = 0
-    max_sharpe_var = None
-    max_sharpe_ret = None
-    max_sharpe_w = None
-
-    for i in tqdm(range(num_iter)):
-        weights = np.random.random(len(symbols))
-        weights /= np.sum(weights)
-        portfolio = PortfolioStatistics(price_df, weights)
-        portfolio_return, portfolio_volatility, sharpe_ratio = portfolio.get_stats()
-        my_bar.progress(i / 10000, text=progress_text)
-
-        if sharpe_ratio > max_sharpe:
-            max_sharpe = sharpe_ratio
-            max_sharpe_vol = portfolio_volatility
-            max_sharpe_ret = portfolio_return
-            max_sharpe_w = weights
-
-        portfolio_vol_list.append(portfolio_volatility)
-        portfolio_ret_list.append(portfolio_return)
-        w_list.append(weights)
-        sharpe_ratio_list.append(sharpe_ratio)
-
-    weights_d = {symbols[i]: max_sharpe_w[i] for i in range(len(symbols))}
-
-    st.json(
-        {
-            "Portfolio with maximum Sharpe Ratio": max_sharpe,
-            "Return": max_sharpe_ret,
-            "Volatility": max_sharpe_vol,
-            "Weights": max_sharpe_w,
-        }
-    )
-
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        plot_returns_vs_volatility(
-            portfolio_vol_list,
-            portfolio_ret_list,
-            sharpe_ratio_list,
-            max_sharpe_vol,
-            max_sharpe_ret,
+    if button_clicked:
+        supertrend_tester = SuperTrendVectorBacktester(
+            df.query("Symbol=='META'"), float(initial_capital) * weights_d["META"]
         )
-    with col2:
-        plot_portfolio_weights(symbols, max_sharpe_w)
+        supertrend_df = supertrend_tester.backtesting_flow()
+        (
+            supertrend_sharpe,
+            supertrend_sortino,
+            supertrend_profit_percentage,
+            supertrend_buy_hold_percentage,
+            supertrend_max_drawdown,
+            supertrend_total_signal,
+        ) = calculate_metrics(supertrend_df, initial_capital, "META", weights_d)
+
+        st.header("Intuition behind the SuperTrend Strategy")
+        annotated_text(*get_supertrend_description())
+        with st.expander("Key Statistics"):
+            col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+            create_container(col1, "Sharpe Ratio", round(supertrend_sharpe, 2))
+            create_container(col2, "Sortino Ratio", round(supertrend_sortino, 2))
+            create_container(
+                col3, "Strategy Profit %", f"{round(supertrend_profit_percentage,2)}%"
+            )
+            create_container(
+                col4, "Buy&Hold Profit %", f"{round(supertrend_buy_hold_percentage,2)}%"
+            )
+            create_container(col5, "Max Drawdown", round(supertrend_max_drawdown, 2))
+            create_container(col6, "Total No. of Signals", supertrend_total_signal)
+        with st.expander("Processed data"):
+            st.dataframe(
+                supertrend_df, use_container_width=True, column_config=sma_column_config
+            )
+        with st.expander("Key visuals"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_supertrend(supertrend_df, 3, 3)
+                plot_drawdown_comparison(supertrend_df)
+            with col2:
+                plot_capital_changes(supertrend_df, "skyblue", "dodgerblue")
+                weighted_benchmark = calculate_sp500_portfolio_value(
+                    benchmark_df, (float(initial_capital) * weights_d["META"])
+                )
+                plot_capital_change_vs_benchmark(supertrend_df, weighted_benchmark)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
+        )
 
 with tab3:
+    if button_clicked:
+        sma_tester = SMAVectorBacktester(
+            df.query("Symbol=='AAPL'"), float(initial_capital) * weights_d["AAPL"]
+        )
+        sma_df = sma_tester.backtesting_flow()
+        (
+            sma_sharpe,
+            sma_sortino,
+            sma_profit_percentage,
+            sma_buy_hold_percentage,
+            sma_max_drawdown,
+            sma_total_signal,
+        ) = calculate_metrics(sma_df, initial_capital, "AAPL", weights_d)
 
-    supertrend_tester = SuperTrendVectorBacktester(
-        df.query("Symbol=='META'"), float(initial_capital) * weights_d["META"]
-    )
-    supertrend_df = supertrend_tester.backtesting_flow()
-    (
-        supertrend_sharpe,
-        supertrend_sortino,
-        supertrend_profit_percentage,
-        supertrend_buy_hold_percentage,
-        supertrend_max_drawdown,
-        supertrend_total_signal,
-    ) = calculate_metrics(supertrend_df, initial_capital, "META", weights_d)
+        st.header("Intuition behind the Triple SMA Crossover Strategy")
+        annotated_text(*get_sma_description())
+        with st.expander("Key Statistics"):
+            col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+            create_container(col1, "Sharpe Ratio", round(sma_sharpe, 2))
+            create_container(col2, "Sortino Ratio", round(sma_sortino, 2))
+            create_container(
+                col3, "Strategy Profit %", f"{round(sma_profit_percentage,2)}%"
+            )
+            create_container(
+                col4, "Buy&Hold Profit %", f"{round(sma_buy_hold_percentage,2)}%"
+            )
+            create_container(col5, "Max Drawdown", round(sma_max_drawdown, 2))
+            create_container(col6, "Total No. of Signals", sma_total_signal)
+        with st.expander("Processed data"):
+            st.dataframe(
+                sma_df, use_container_width=True, column_config=sma_column_config
+            )
+        with st.expander("Key visuals"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_sma_trend(sma_df, 3, 3)
 
-    st.header("Intuition behind the SuperTrend Strategy")
-    annotated_text(
-        "The SuperTrend strategy is a trend-following indicator",
-        "that uses",
-        ("Average True Range (ATR)", "", "#fea"),
-        "to determine the direction of the trend. The ATR is a measure of market volatility, \
-                and the SuperTrend indicator uses it to calculate the trend direction. \
-                A buy signal is generated when the price crosses above the SuperTrend line, \
-                indicating a bullish trend, while a sell signal occurs when the price crosses below the SuperTrend line, \
-                signaling a bearish trend. This method aims to filter market noise and improve trade reliability by using \
-                a volatility-based indicator to determine trend direction.",
-    )
-    with st.expander("Key Statistics"):
-        col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
-        create_container(col1, "Sharpe Ratio", round(supertrend_sharpe, 2))
-        create_container(col2, "Sortino Ratio", round(supertrend_sortino, 2))
-        create_container(
-            col3, "Strategy Profit %", f"{round(supertrend_profit_percentage,2)}%"
-        )
-        create_container(
-            col4, "Buy&Hold Profit %", f"{round(supertrend_buy_hold_percentage,2)}%"
-        )
-        create_container(col5, "Max Drawdown", round(supertrend_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", supertrend_total_signal)
-    with st.expander("Processed data"):
-        st.dataframe(
-            supertrend_df, use_container_width=True, column_config=sma_column_config
-        )
-    with st.expander("Key visuals"):
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            plot_supertrend(supertrend_df, 3, 3)
-            plot_drawdown_comparison(supertrend_df)
-        with col2:
-            plot_capital_changes(supertrend_df, "skyblue", "dodgerblue")
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=supertrend_df["Date"],
-                    y=supertrend_df["Total Strategy Portfolio Value"],
-                    name="Strategy Capital Change",
+                plot_drawdown_comparison(sma_df)
+
+            with col2:
+                plot_capital_changes(sma_df, "skyblue", "dodgerblue")
+                weighted_benchmark = calculate_sp500_portfolio_value(
+                    benchmark_df, (float(initial_capital) * weights_d["AAPL"])
                 )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=benchmark_df["Date"],
-                    y=benchmark_df["Buy and Hold Portfolio Value"],
-                    name="SP500 Buy and Hold Benchmark",
-                )
-            )
-            fig.update_layout(
-                title="Capital Change vs Benchmark",
-                xaxis_title="Date",
-                yaxis_title="Capital",
-            )
-            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+                plot_capital_change_vs_benchmark(sma_df, weighted_benchmark)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
+        )
 
 with tab4:
-    sma_tester = SMAVectorBacktester(
-        df.query("Symbol=='AAPL'"), float(initial_capital) * weights_d["AAPL"]
-    )
-    sma_df = sma_tester.backtesting_flow()
-    (
-        sma_sharpe,
-        sma_sortino,
-        sma_profit_percentage,
-        sma_buy_hold_percentage,
-        sma_max_drawdown,
-        sma_total_signal,
-    ) = calculate_metrics(sma_df, initial_capital, "AAPL", weights_d)
-
-    st.header("Intuition behind the Triple SMA Crossover Strategy")
-    annotated_text(
-        "The Triple SMA Crossover strategy involves",
-        ("three Simple Moving Averages (SMAs)", "", "#fea"),
-        "to signal trading opportunities based on trend direction changes. \
-            A buy signal is generated when a short-term SMA ",
-        ("crosses above", "", "#fea"),
-        " both medium- and long-term SMAs, indicating an upward\
-            trend. Conversely, a sell signal occurs when a short-term SMA",
-        ("crosses below", "", "#fea"),
-        " both medium- and long-term SMAs, suggesting a \
-            downward trend. This method aims to filter market noise and \
-            improve trade reliability by using three time frames for trend confirmation",
-    )
-    with st.expander("Key Statistics"):
-        col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
-        create_container(col1, "Sharpe Ratio", round(sma_sharpe, 2))
-        create_container(col2, "Sortino Ratio", round(sma_sortino, 2))
-        create_container(
-            col3, "Strategy Profit %", f"{round(sma_profit_percentage,2)}%"
+    if button_clicked:
+        st.header("Intuition behind the Donchian Channel Strategy")
+        annotated_text(*get_donchian_description())
+        dc_tester = DonchianChannelVectorBacktester(
+            df.query("Symbol=='NFLX'"), float(initial_capital) * weights_d["NFLX"]
         )
-        create_container(
-            col4, "Buy&Hold Profit %", f"{round(sma_buy_hold_percentage,2)}%"
-        )
-        create_container(col5, "Max Drawdown", round(sma_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", sma_total_signal)
-    with st.expander("Processed data"):
-        st.dataframe(sma_df, use_container_width=True, column_config=sma_column_config)
-    with st.expander("Key visuals"):
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            plot_sma_trend(sma_df, 3, 3)
-            # plot drawdown
-            plot_drawdown_comparison(sma_df)
-
-        with col2:
-            plot_capital_changes(sma_df, "skyblue", "dodgerblue")
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=sma_df["Date"],
-                    y=sma_df["Total Strategy Portfolio Value"],
-                    name="Strategy Capital Change",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=benchmark_df["Date"],
-                    y=benchmark_df["Buy and Hold Portfolio Value"],
-                    name="SP500 Buy and Hold Benchmark",
-                )
-            )
-            fig.update_layout(
-                title="Capital Change vs Benchmark",
-                xaxis_title="Date",
-                yaxis_title="Capital",
-            )
-            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-
-        # plot_profit_loss(sma_df, "crimson", "lightgrey")
-
-with tab5:
-    st.header("Intuition behind the Donchian Channel Strategy")
-    annotated_text(
-        "The Donchian Channel strategy, developed by Richard Donchian",
-        "is a technical analysis tool used to identify market trends ",
-        ("through the highest and lowest prices over a specific period.", "", "#fea"),
-        "This period is defined by",
-        ("upper_length and lower_length parameters", "", "#fea"),
-        "which dictate the timeframe for the",
-        ("highest high (upper channel) and lowest low (lower channel)", "", "#fea"),
-        "respectively. Typically, traders use these channels to spot breakout points,"
-        "going long when prices push above the upper channel and short when they drop "
-        "below the lower channel, leveraging these parameters to fine-tune the strategy's sensitivity to market movements.",
-    )
-    dc_tester = DonchianChannelVectorBacktester(
-        df.query("Symbol=='NFLX'"), float(initial_capital) * weights_d["NFLX"]
-    )
-    dc_df = dc_tester.backtesting_flow()
-    dc_sharpe = dc_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        dc_df["Total Strategy Portfolio Value"].pct_change().std()
-    )
-    dc_sortino = dc_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        dc_df["Total Strategy Portfolio Value"]
-        .pct_change()
-        .loc[dc_df["Total Strategy Portfolio Value"].pct_change() < 0]
-        .std()
-    )
-    dc_profit_percentage = (
+        dc_df = dc_tester.backtesting_flow()
         (
-            dc_df["Total Strategy Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["NFLX"])
-        )
-        - 1
-    ) * 100
-    dc_buy_hold_percentage = (
-        (
-            dc_df["Buy and Hold Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["NFLX"])
-        )
-        - 1
-    ) * 100
-    dc_max_drawdown = dc_df["Strategy Max Drawdown"].iloc[-1]
-    dc_total_signa = dc_df.query("Signal!='Hold'").shape[0]
-
-    with st.expander("Key Statistics"):
-        col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
-        create_container(col1, "Sharpe Ratio", round(dc_sharpe, 2))
-        create_container(col2, "Sortino Ratio", round(dc_sortino, 2))
-        create_container(col3, "Strategy Profit %", f"{round(dc_profit_percentage,2)}%")
-        create_container(
-            col4, "Buy&Hold Profit %", f"{round(dc_buy_hold_percentage,2)}%"
-        )
-        create_container(col5, "Max Drawdown", round(dc_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", dc_total_signa)
-    with st.expander("Processed data"):
-        st.dataframe(dc_df, use_container_width=True, column_config=sma_column_config)
-    with st.expander("Key visuals"):
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            plot_dc_trend(dc_df, 3, 3)
-            # plot drawdown
-            plot_drawdown_comparison(dc_df)
-
-        with col2:
-            plot_capital_changes(dc_df, "skyblue", "dodgerblue")
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=dc_df["Date"],
-                    y=dc_df["Total Strategy Portfolio Value"],
-                    name="Strategy Capital Change",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=benchmark_df["Date"],
-                    y=benchmark_df["Buy and Hold Portfolio Value"],
-                    name="SP500 Buy and Hold Benchmark",
-                )
-            )
-            fig.update_layout(
-                title="Capital Change vs Benchmark",
-                xaxis_title="Date",
-                yaxis_title="Capital",
-            )
-            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-
-with tab6:
-    ml_tester = MLClassifierVectorBacktester(
-        df.query("Symbol=='AMZN'"), float(initial_capital) * weights_d["AMZN"]
-    )
-    ml_df, shap_df = ml_tester.backtesting_flow()
-    ml_sharpe = ml_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        ml_df["Total Strategy Portfolio Value"].pct_change().std()
-    )
-    ml_sortino = ml_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        ml_df["Total Strategy Portfolio Value"]
-        .pct_change()
-        .loc[ml_df["Total Strategy Portfolio Value"].pct_change() < 0]
-        .std()
-    )
-    ml_profit_percentage = (
-        (
-            ml_df["Total Strategy Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["AMZN"])
-        )
-        - 1
-    ) * 100
-    ml_buy_hold_percentage = (
-        (
-            ml_df["Buy and Hold Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["AMZN"])
-        )
-        - 1
-    ) * 100
-    ml_max_drawdown = ml_df["Strategy Max Drawdown"].iloc[-1]
-    ml_total_signa = ml_df.query("Signal!='Hold'").shape[0]
-
-    st.header("Intuition behind the ML based Strategy")
-    annotated_text(
-        "The ML-based strategy uses",
-        ("machine learning models", "", "#fea"),
-        "to predict future price movements. The strategy uses historical price data to train the model, \
-            which then generates buy and sell signals based on the predicted price movements. \
-            This method aims to filter market noise and improve trade reliability by using \
-            a machine learning model to predict future price movements.",
-    )
-
-    with st.expander("Key Statistics"):
-        col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
-        create_container(col1, "Sharpe Ratio", round(ml_sharpe, 2))
-        create_container(col2, "Sortino Ratio", round(ml_sortino, 2))
-        create_container(col3, "Strategy Profit %", f"{round(ml_profit_percentage,2)}%")
-        create_container(
-            col4, "Buy&Hold Profit %", f"{round(ml_buy_hold_percentage,2)}%"
-        )
-        create_container(col5, "Max Drawdown", round(ml_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", ml_total_signa)
-    with st.expander("Processed data"):
-        st.dataframe(ml_df, use_container_width=True, column_config=sma_column_config)
-    with st.expander("Key visuals"):
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            plot_shap_bar_chart(shap_df)
-            # plot drawdown
-            plot_drawdown_comparison(ml_df)
-
-        with col2:
-            plot_capital_changes(ml_df, "skyblue", "dodgerblue")
-            fig = go.Figure()
-            fig.add_trace(
-                go.Scatter(
-                    x=ml_df["Date"],
-                    y=ml_df["Total Strategy Portfolio Value"],
-                    name="Strategy Capital Change",
-                )
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=benchmark_df["Date"],
-                    y=benchmark_df["Buy and Hold Portfolio Value"],
-                    name="SP500 Buy and Hold Benchmark",
-                )
-            )
-            fig.update_layout(
-                title="Capital Change vs Benchmark",
-                xaxis_title="Date",
-                yaxis_title="Capital",
-            )
-            st.plotly_chart(fig, use_container_width=True, theme="streamlit")
-
-with tab7:
-    st.header("Intuition behind the LSTM based Strategy")
-    annotated_text(
-        "The LSTM-based strategy uses",
-        ("Long Short-Term Memory (LSTM) networks", "", "#fea"),
-        "to predict future price movements. The strategy uses historical price data to train the model, \
-            which then generates buy and sell signals based on the predicted price movements. \
-            This method aims to filter market noise and improve trade reliability by using \
-            a machine learning model to predict future price movements.",
-    )
-    with st.spinner("Model training in progress. Please wait...."):
-        lstm_tester = LSTMVectorBacktester(
-            df.query("Symbol=='GOOGL'"), float(initial_capital) * weights_d["GOOGL"]
-        )
-        lstm_df = lstm_tester.backtesting_flow()
-        lstm_sharpe = lstm_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-            lstm_df["Total Strategy Portfolio Value"].pct_change().std()
-        )
-        lstm_sortino = lstm_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-            lstm_df["Total Strategy Portfolio Value"]
-            .pct_change()
-            .loc[lstm_df["Total Strategy Portfolio Value"].pct_change() < 0]
-            .std()
-        )
-        lstm_profit_percentage = (
-            (
-                lstm_df["Total Strategy Portfolio Value"].iloc[-1]
-                / (float(initial_capital) * weights_d["GOOGL"])
-            )
-            - 1
-        ) * 100
-        lstm_buy_hold_percentage = (
-            (
-                lstm_df["Buy and Hold Portfolio Value"].iloc[-1]
-                / (float(initial_capital) * weights_d["GOOGL"])
-            )
-            - 1
-        ) * 100
-        lstm_max_drawdown = lstm_df["Strategy Max Drawdown"].iloc[-1]
-        lstm_total_signa = lstm_df.query("Signal!='Hold'").shape[0]
+            dc_sharpe,
+            dc_sortino,
+            dc_profit_percentage,
+            dc_buy_hold_percentage,
+            dc_max_drawdown,
+            dc_total_signal,
+        ) = calculate_metrics(dc_df, initial_capital, "NFLX", weights_d)
 
         with st.expander("Key Statistics"):
             col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
-            create_container(col1, "Sharpe Ratio", round(lstm_sharpe, 2))
-            create_container(col2, "Sortino Ratio", round(lstm_sortino, 2))
+            create_container(col1, "Sharpe Ratio", round(dc_sharpe, 2))
+            create_container(col2, "Sortino Ratio", round(dc_sortino, 2))
             create_container(
-                col3, "Strategy Profit %", f"{round(lstm_profit_percentage,2)}%"
+                col3, "Strategy Profit %", f"{round(dc_profit_percentage,2)}%"
             )
             create_container(
-                col4, "Buy&Hold Profit %", f"{round(lstm_buy_hold_percentage,2)}%"
+                col4, "Buy&Hold Profit %", f"{round(dc_buy_hold_percentage,2)}%"
             )
-            create_container(col5, "Max Drawdown", round(lstm_max_drawdown, 2))
-            create_container(col6, "Total No. of Signals", lstm_total_signa)
+            create_container(col5, "Max Drawdown", round(dc_max_drawdown, 2))
+            create_container(col6, "Total No. of Signals", dc_total_signal)
+        with st.expander("Processed data"):
+            st.dataframe(
+                dc_df, use_container_width=True, column_config=sma_column_config
+            )
+        with st.expander("Key visuals"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_dc_trend(dc_df, 3, 3)
 
-with tab8:
+                plot_drawdown_comparison(dc_df)
 
-    sma_returns = sma_df["Total Strategy Portfolio Value"].pct_change()
-    supertrend_returns = supertrend_df["Total Strategy Portfolio Value"].pct_change()
-    dc_returns = dc_df["Total Strategy Portfolio Value"].pct_change()
-    ml_returns = ml_df["Total Strategy Portfolio Value"].pct_change()
-    lstm_returns = lstm_df["Total Strategy Portfolio Value"].pct_change()
-
-    return_df = pd.DataFrame(
-        {
-            "Date": sma_df["Date"],
-            "SuperTrend Returns": supertrend_returns,
-            "SMA Returns": sma_returns,
-            "DC Returns": dc_returns,
-            "ML Returns": ml_returns,
-            "LSTM Returns": lstm_returns,
-        }
-    ).dropna()
-
-    sma_value = sma_df["Total Strategy Portfolio Value"]
-    sma_buy_and_hold_value = sma_df["Buy and Hold Portfolio Value"]
-    supertrend_value = supertrend_df["Total Strategy Portfolio Value"]
-    supertrend_buy_and_hold_value = supertrend_df["Buy and Hold Portfolio Value"]
-    dc_value = dc_df["Total Strategy Portfolio Value"]
-    dc_buy_and_hold_value = dc_df["Buy and Hold Portfolio Value"]
-    ml_value = ml_df["Total Strategy Portfolio Value"]
-    ml_buy_and_hold_value = ml_df["Buy and Hold Portfolio Value"]
-    lstm_value = lstm_df["Total Strategy Portfolio Value"]
-    lstm_buy_and_hold_value = lstm_df["Buy and Hold Portfolio Value"]
-
-    value_df = pd.DataFrame(
-        {
-            "Date": sma_df["Date"],
-            "SuperTrend Value": supertrend_value,
-            "SMA Value": sma_value,
-            "DC Value": dc_value,
-            "ML Value": ml_value,
-            "LSTM Value": lstm_value,
-            "Strategy Cumulative Value": supertrend_value
-            + sma_value
-            + dc_value
-            + ml_value
-            + lstm_value,
-            "Buy and Hold Cumulative Value": supertrend_buy_and_hold_value
-            + sma_buy_and_hold_value
-            + dc_buy_and_hold_value
-            + ml_buy_and_hold_value
-            + lstm_buy_and_hold_value,
-            "SP500 Benchmark": benchmark_df["Buy and Hold Portfolio Value"],
-        }
-    ).dropna()
-
-    fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(
-            x=value_df["Date"],
-            y=value_df["Strategy Cumulative Value"],
-            name="Strategy Cumulative Value",
+            with col2:
+                plot_capital_changes(dc_df, "skyblue", "dodgerblue")
+                weighted_benchmark = calculate_sp500_portfolio_value(
+                    benchmark_df, (float(initial_capital) * weights_d["NFLX"])
+                )
+                plot_capital_change_vs_benchmark(dc_df, weighted_benchmark)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
         )
-    )
-    fig.add_trace(
-        go.Scatter(
-            x=value_df["Date"],
-            y=value_df["Buy and Hold Cumulative Value"],
-            name="Buy and Hold Cumulative Value",
+
+with tab5:
+    if button_clicked:
+        ml_tester = MLClassifierVectorBacktester(
+            df.query("Symbol=='AMZN'"), float(initial_capital) * weights_d["AMZN"]
         )
-    )
+        ml_df, shap_df = ml_tester.backtesting_flow()
+        (
+            ml_sharpe,
+            ml_sortino,
+            ml_profit_percentage,
+            ml_buy_hold_percentage,
+            ml_max_drawdown,
+            ml_total_signal,
+        ) = calculate_metrics(ml_df, initial_capital, "AMZN", weights_d)
 
-    fig.add_trace(
-        go.Scatter(
-            x=value_df["Date"],
-            y=value_df["SP500 Benchmark"],
-            name="SP500 Buy and Hold Benchmark",
+        st.header("Intuition behind the ML based Strategy")
+        annotated_text(*get_ml_strategy_description())
+
+        with st.expander("Key Statistics"):
+            col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+            create_container(col1, "Sharpe Ratio", round(ml_sharpe, 2))
+            create_container(col2, "Sortino Ratio", round(ml_sortino, 2))
+            create_container(
+                col3, "Strategy Profit %", f"{round(ml_profit_percentage,2)}%"
+            )
+            create_container(
+                col4, "Buy&Hold Profit %", f"{round(ml_buy_hold_percentage,2)}%"
+            )
+            create_container(col5, "Max Drawdown", round(ml_max_drawdown, 2))
+            create_container(col6, "Total No. of Signals", ml_total_signal)
+        with st.expander("Processed data"):
+            st.dataframe(
+                ml_df, use_container_width=True, column_config=sma_column_config
+            )
+        with st.expander("Key visuals"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
+                plot_shap_bar_chart(shap_df)
+
+                plot_drawdown_comparison(ml_df)
+
+            with col2:
+                plot_capital_changes(ml_df, "skyblue", "dodgerblue")
+                weighted_benchmark = calculate_sp500_portfolio_value(
+                    benchmark_df, (float(initial_capital) * weights_d["AMZN"])
+                )
+                plot_capital_change_vs_benchmark(ml_df, weighted_benchmark)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
         )
-    )
 
-    fig.update_layout(
-        title="Strategy Cumulative Value vs Benchmark",
-        xaxis_title="Date",
-        yaxis_title="Capital",
-    )
-    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+with tab6:
+    if button_clicked:
+        st.header("Intuition behind the LSTM based Strategy")
+        annotated_text(*get_lstm_strategy_description())
+        with st.spinner("Model training in progress. Please wait...."):
+            lstm_tester = LSTMVectorBacktester(
+                df.query("Symbol=='GOOGL'"), float(initial_capital) * weights_d["GOOGL"]
+            )
+            lstm_df = lstm_tester.backtesting_flow()
+            (
+                lstm_sharpe,
+                lstm_sortino,
+                lstm_profit_percentage,
+                lstm_buy_hold_percentage,
+                lstm_max_drawdown,
+                lstm_total_signal,
+            ) = calculate_metrics(lstm_df, initial_capital, "GOOGL", weights_d)
 
-    return_df["Date"] = pd.to_datetime(return_df["Date"])
-    grouped_df = return_df.groupby(pd.Grouper(key="Date", freq="Y")).sum().reset_index()
+            with st.expander("Key Statistics"):
+                col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+                create_container(col1, "Sharpe Ratio", round(lstm_sharpe, 2))
+                create_container(col2, "Sortino Ratio", round(lstm_sortino, 2))
+                create_container(
+                    col3, "Strategy Profit %", f"{round(lstm_profit_percentage,2)}%"
+                )
+                create_container(
+                    col4, "Buy&Hold Profit %", f"{round(lstm_buy_hold_percentage,2)}%"
+                )
+                create_container(col5, "Max Drawdown", round(lstm_max_drawdown, 2))
+                create_container(col6, "Total No. of Signals", lstm_total_signal)
+            with st.expander("Processed data"):
+                st.dataframe(
+                    lstm_df, use_container_width=True, column_config=sma_column_config
+                )
+            with st.expander("Key visuals"):
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    plot_stock_price_prediction(
+                        lstm_df["Close"], lstm_df["Predicted Close"]
+                    )
 
-    st.markdown("## Annual Returns")
-    st.dataframe(grouped_df, use_container_width=True)
+                    plot_drawdown_comparison(lstm_df)
 
-    # st.write(return_df.drop("Date", axis=1).mean() * 252)
+                with col2:
+                    plot_capital_changes(lstm_df, "skyblue", "dodgerblue")
+                    weighted_benchmark = calculate_sp500_portfolio_value(
+                        benchmark_df, (float(initial_capital) * weights_d["GOOGL"])
+                    )
+                plot_capital_change_vs_benchmark(lstm_df, weighted_benchmark)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
+        )
 
-    portfolio_mean = (
-        weights_d["META"] * grouped_df["SuperTrend Returns"].mean()
-        + weights_d["AAPL"] * grouped_df["SMA Returns"].mean()
-        + weights_d["NFLX"] * grouped_df["DC Returns"].mean()
-        + weights_d["AMZN"] * grouped_df["ML Returns"].mean()
-        + weights_d["GOOGL"] * grouped_df["LSTM Returns"].mean()
-    )
+with tab7:
+    if button_clicked:
 
-    cov_matrix = grouped_df.drop("Date", axis=1).cov()
+        sma_returns = sma_df["Total Strategy Portfolio Value"].pct_change()
+        supertrend_returns = supertrend_df[
+            "Total Strategy Portfolio Value"
+        ].pct_change()
+        dc_returns = dc_df["Total Strategy Portfolio Value"].pct_change()
+        ml_returns = ml_df["Total Strategy Portfolio Value"].pct_change()
+        lstm_returns = lstm_df["Total Strategy Portfolio Value"].pct_change()
 
-    portfolio_variance = np.dot(
-        np.array(list(weights_d.values())).T,
-        np.dot(cov_matrix, np.array(list(weights_d.values()))),
-    )
+        return_df = pd.DataFrame(
+            {
+                "Date": sma_df["Date"],
+                "SuperTrend Returns": supertrend_returns,
+                "SMA Returns": sma_returns,
+                "DC Returns": dc_returns,
+                "ML Returns": ml_returns,
+                "LSTM Returns": lstm_returns,
+            }
+        ).dropna()
 
-    portfolio_volatility = np.sqrt(portfolio_variance)
+        sma_value = sma_df["Total Strategy Portfolio Value"]
+        sma_buy_and_hold_value = sma_df["Buy and Hold Portfolio Value"]
+        supertrend_value = supertrend_df["Total Strategy Portfolio Value"]
+        supertrend_buy_and_hold_value = supertrend_df["Buy and Hold Portfolio Value"]
+        dc_value = dc_df["Total Strategy Portfolio Value"]
+        dc_buy_and_hold_value = dc_df["Buy and Hold Portfolio Value"]
+        ml_value = ml_df["Total Strategy Portfolio Value"]
+        ml_buy_and_hold_value = ml_df["Buy and Hold Portfolio Value"]
+        lstm_value = lstm_df["Total Strategy Portfolio Value"]
+        lstm_buy_and_hold_value = lstm_df["Buy and Hold Portfolio Value"]
 
-    portfolio_sharpe = portfolio_mean / portfolio_volatility
+        value_df = pd.DataFrame(
+            {
+                "Date": sma_df["Date"],
+                "SuperTrend Value": supertrend_value,
+                "SMA Value": sma_value,
+                "DC Value": dc_value,
+                "ML Value": ml_value,
+                "LSTM Value": lstm_value,
+                "Strategy Cumulative Value": supertrend_value
+                + sma_value
+                + dc_value
+                + ml_value
+                + lstm_value,
+                "Buy and Hold Cumulative Value": supertrend_buy_and_hold_value
+                + sma_buy_and_hold_value
+                + dc_buy_and_hold_value
+                + ml_buy_and_hold_value
+                + lstm_buy_and_hold_value,
+                "SP500 Benchmark": benchmark_df["Buy and Hold Portfolio Value"],
+            }
+        ).dropna()
 
-    st.write(portfolio_sharpe)
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=value_df["Date"],
+                y=value_df["Strategy Cumulative Value"],
+                name="Strategy Cumulative Value",
+            )
+        )
+        fig.add_trace(
+            go.Scatter(
+                x=value_df["Date"],
+                y=value_df["Buy and Hold Cumulative Value"],
+                name="Buy and Hold Cumulative Value",
+            )
+        )
 
-    # st.dataframe(cov_matrix, use_container_width=True)
-    # st.dataframe(return_df, use_container_width=True)
+        fig.add_trace(
+            go.Scatter(
+                x=value_df["Date"],
+                y=value_df["SP500 Benchmark"],
+                name="SP500 Buy and Hold Benchmark",
+            )
+        )
+
+        fig.update_layout(
+            title="Strategy Cumulative Value vs Benchmark",
+            xaxis_title="Date",
+            yaxis_title="Capital",
+        )
+        st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+        return_df["Date"] = pd.to_datetime(return_df["Date"])
+        grouped_df = (
+            return_df.groupby(pd.Grouper(key="Date", freq="Y")).sum().reset_index()
+        )
+
+        st.markdown("## Annual Returns")
+        st.dataframe(grouped_df, use_container_width=True)
+
+        # st.write(return_df.drop("Date", axis=1).mean() * 252)
+
+        portfolio_mean = (
+            weights_d["META"] * grouped_df["SuperTrend Returns"].mean()
+            + weights_d["AAPL"] * grouped_df["SMA Returns"].mean()
+            + weights_d["NFLX"] * grouped_df["DC Returns"].mean()
+            + weights_d["AMZN"] * grouped_df["ML Returns"].mean()
+            + weights_d["GOOGL"] * grouped_df["LSTM Returns"].mean()
+        )
+
+        cov_matrix = grouped_df.drop("Date", axis=1).cov()
+
+        portfolio_variance = np.dot(
+            np.array(list(weights_d.values())).T,
+            np.dot(cov_matrix, np.array(list(weights_d.values()))),
+        )
+
+        portfolio_volatility = np.sqrt(portfolio_variance)
+
+        portfolio_sharpe = portfolio_mean / portfolio_volatility
+
+        st.write(portfolio_sharpe)
+
+        # st.dataframe(cov_matrix, use_container_width=True)
+        # st.dataframe(return_df, use_container_width=True)
+    else:
+        st.info(
+            "Please click on the Load Data button to start analyzing the selected stocks",
+            icon="ℹ️",
+        )
