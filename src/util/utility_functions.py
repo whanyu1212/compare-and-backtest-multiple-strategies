@@ -1,4 +1,5 @@
 import yaml
+import numpy as np
 import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
@@ -22,6 +23,40 @@ def fetch_data(selected_stock, date_range, interval="1d"):
     df = extractor.data
 
     return df
+
+
+def calculate_metrics(
+    df,
+    initial_capital,
+    symbol,
+    weights,
+    strategy_column="Total Strategy Portfolio Value",
+    buy_hold_column="Buy and Hold Portfolio Value",
+):
+    pct_change = df[strategy_column].pct_change()
+    mean_pct_change = pct_change.mean()
+    std_pct_change = pct_change.std()
+    negative_std_pct_change = pct_change.loc[pct_change < 0].std()
+
+    sharpe = mean_pct_change * np.sqrt(252) / std_pct_change
+    sortino = mean_pct_change * np.sqrt(252) / negative_std_pct_change
+    profit_percentage = (
+        (df[strategy_column].iloc[-1] / (float(initial_capital) * weights[symbol])) - 1
+    ) * 100
+    buy_hold_percentage = (
+        (df[buy_hold_column].iloc[-1] / (float(initial_capital) * weights[symbol])) - 1
+    ) * 100
+    max_drawdown = df["Strategy Max Drawdown"].iloc[-1]
+    total_signal = df.query("Signal!='Hold'").shape[0]
+
+    return (
+        sharpe,
+        sortino,
+        profit_percentage,
+        buy_hold_percentage,
+        max_drawdown,
+        total_signal,
+    )
 
 
 def load_css(file_name):
