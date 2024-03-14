@@ -14,3 +14,10 @@ base_columns:
   - Strategy Max Drawdown
   - Buy and Hold Drawdown
   - Buy and Hold Max Drawdown
+
+symbols:
+  - META
+  - AAPL
+  - AMZN
+  - NFLX
+  - GOOGL
