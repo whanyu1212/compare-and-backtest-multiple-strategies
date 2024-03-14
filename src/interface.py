@@ -10,6 +10,7 @@ from annotated_text import annotated_text
 from datetime import datetime
 from util.utility_functions import (
     load_css,
+    calculate_metrics,
     create_container,
     plot_sma_trend,
     plot_dc_trend,
@@ -124,7 +125,7 @@ for symbol, column in zip(symbols, columns):
     percentage_change = (
         filtered_df["Close"].iloc[-1] - filtered_df["Close"].iloc[-2]
     ) / filtered_df["Close"].iloc[-2]
-    percentage_string = "{:.2f}%".format(percentage_change * 150)
+    percentage_string = "{:.2f}%".format(percentage_change * 100)
     column.metric(
         symbol,
         round(filtered_df["Close"].iloc[-1], 2),
@@ -179,7 +180,7 @@ with tab1:
         )
 
 with tab2:
-    st.header("Initial Allocation of Capital using Monte Carlo Simulation")
+    st.header("Generating Initial Portfolio Weights")
     progress_text = "Calculating in progress. Please wait...."
     my_bar = st.progress(0, text=progress_text)
     d = {}
@@ -246,35 +247,14 @@ with tab3:
         df.query("Symbol=='META'"), float(initial_capital) * weights_d["META"]
     )
     supertrend_df = supertrend_tester.backtesting_flow()
-    supertrend_sharpe = supertrend_df[
-        "Total Strategy Portfolio Value"
-    ].pct_change().mean() / (
-        supertrend_df["Total Strategy Portfolio Value"].pct_change().std()
-    )
-    supertrend_sortino = supertrend_df[
-        "Total Strategy Portfolio Value"
-    ].pct_change().mean() / (
-        supertrend_df["Total Strategy Portfolio Value"]
-        .pct_change()
-        .loc[supertrend_df["Total Strategy Portfolio Value"].pct_change() < 0]
-        .std()
-    )
-    supertrend_profit_percentage = (
-        (
-            supertrend_df["Total Strategy Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["META"])
-        )
-        - 1
-    ) * 100
-    supertrend_buy_hold_percentage = (
-        (
-            supertrend_df["Buy and Hold Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["META"])
-        )
-        - 1
-    ) * 100
-    supertrend_max_drawdown = supertrend_df["Strategy Max Drawdown"].iloc[-1]
-    supertrend_total_signa = supertrend_df.query("Signal!='Hold'").shape[0]
+    (
+        supertrend_sharpe,
+        supertrend_sortino,
+        supertrend_profit_percentage,
+        supertrend_buy_hold_percentage,
+        supertrend_max_drawdown,
+        supertrend_total_signal,
+    ) = calculate_metrics(supertrend_df, initial_capital, "META", weights_d)
 
     st.header("Intuition behind the SuperTrend Strategy")
     annotated_text(
@@ -299,7 +279,7 @@ with tab3:
             col4, "Buy&Hold Profit %", f"{round(supertrend_buy_hold_percentage,2)}%"
         )
         create_container(col5, "Max Drawdown", round(supertrend_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", supertrend_total_signa)
+        create_container(col6, "Total No. of Signals", supertrend_total_signal)
     with st.expander("Processed data"):
         st.dataframe(
             supertrend_df, use_container_width=True, column_config=sma_column_config
@@ -338,31 +318,14 @@ with tab4:
         df.query("Symbol=='AAPL'"), float(initial_capital) * weights_d["AAPL"]
     )
     sma_df = sma_tester.backtesting_flow()
-    sma_sharpe = sma_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        sma_df["Total Strategy Portfolio Value"].pct_change().std()
-    )
-    sma_sortino = sma_df["Total Strategy Portfolio Value"].pct_change().mean() / (
-        sma_df["Total Strategy Portfolio Value"]
-        .pct_change()
-        .loc[sma_df["Total Strategy Portfolio Value"].pct_change() < 0]
-        .std()
-    )
-    sma_profit_percentage = (
-        (
-            sma_df["Total Strategy Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["AAPL"])
-        )
-        - 1
-    ) * 100
-    sma_buy_hold_percentage = (
-        (
-            sma_df["Buy and Hold Portfolio Value"].iloc[-1]
-            / (float(initial_capital) * weights_d["AAPL"])
-        )
-        - 1
-    ) * 100
-    sma_max_drawdown = sma_df["Strategy Max Drawdown"].iloc[-1]
-    sma_total_signa = sma_df.query("Signal!='Hold'").shape[0]
+    (
+        sma_sharpe,
+        sma_sortino,
+        sma_profit_percentage,
+        sma_buy_hold_percentage,
+        sma_max_drawdown,
+        sma_total_signal,
+    ) = calculate_metrics(sma_df, initial_capital, "AAPL", weights_d)
 
     st.header("Intuition behind the Triple SMA Crossover Strategy")
     annotated_text(
@@ -389,7 +352,7 @@ with tab4:
             col4, "Buy&Hold Profit %", f"{round(sma_buy_hold_percentage,2)}%"
         )
         create_container(col5, "Max Drawdown", round(sma_max_drawdown, 2))
-        create_container(col6, "Total No. of Signals", sma_total_signa)
+        create_container(col6, "Total No. of Signals", sma_total_signal)
     with st.expander("Processed data"):
         st.dataframe(sma_df, use_container_width=True, column_config=sma_column_config)
     with st.expander("Key visuals"):
@@ -652,51 +615,115 @@ with tab7:
 
 with tab8:
 
-    portfolio_value = (
-        supertrend_df["Total Strategy Portfolio Value"]
-        + sma_df["Total Strategy Portfolio Value"]
-        + dc_df["Total Strategy Portfolio Value"]
-        + ml_df["Total Strategy Portfolio Value"]
-        + lstm_df["Total Strategy Portfolio Value"]
-    )
+    sma_returns = sma_df["Total Strategy Portfolio Value"].pct_change()
+    supertrend_returns = supertrend_df["Total Strategy Portfolio Value"].pct_change()
+    dc_returns = dc_df["Total Strategy Portfolio Value"].pct_change()
+    ml_returns = ml_df["Total Strategy Portfolio Value"].pct_change()
+    lstm_returns = lstm_df["Total Strategy Portfolio Value"].pct_change()
 
-    buy_and_hold = (
-        supertrend_df["Buy and Hold Portfolio Value"]
-        + sma_df["Buy and Hold Portfolio Value"]
-        + dc_df["Buy and Hold Portfolio Value"]
-        + ml_df["Buy and Hold Portfolio Value"]
-        + lstm_df["Buy and Hold Portfolio Value"]
-    )
-
-    final_df = pd.DataFrame(
+    return_df = pd.DataFrame(
         {
-            "Date": supertrend_df["Date"],
-            "Portfolio Value": portfolio_value,
-            "Buy and Hold": buy_and_hold,
+            "Date": sma_df["Date"],
+            "SuperTrend Returns": supertrend_returns,
+            "SMA Returns": sma_returns,
+            "DC Returns": dc_returns,
+            "ML Returns": ml_returns,
+            "LSTM Returns": lstm_returns,
         }
-    )
+    ).dropna()
+
+    sma_value = sma_df["Total Strategy Portfolio Value"]
+    sma_buy_and_hold_value = sma_df["Buy and Hold Portfolio Value"]
+    supertrend_value = supertrend_df["Total Strategy Portfolio Value"]
+    supertrend_buy_and_hold_value = supertrend_df["Buy and Hold Portfolio Value"]
+    dc_value = dc_df["Total Strategy Portfolio Value"]
+    dc_buy_and_hold_value = dc_df["Buy and Hold Portfolio Value"]
+    ml_value = ml_df["Total Strategy Portfolio Value"]
+    ml_buy_and_hold_value = ml_df["Buy and Hold Portfolio Value"]
+    lstm_value = lstm_df["Total Strategy Portfolio Value"]
+    lstm_buy_and_hold_value = lstm_df["Buy and Hold Portfolio Value"]
+
+    value_df = pd.DataFrame(
+        {
+            "Date": sma_df["Date"],
+            "SuperTrend Value": supertrend_value,
+            "SMA Value": sma_value,
+            "DC Value": dc_value,
+            "ML Value": ml_value,
+            "LSTM Value": lstm_value,
+            "Strategy Cumulative Value": supertrend_value
+            + sma_value
+            + dc_value
+            + ml_value
+            + lstm_value,
+            "Buy and Hold Cumulative Value": supertrend_buy_and_hold_value
+            + sma_buy_and_hold_value
+            + dc_buy_and_hold_value
+            + ml_buy_and_hold_value
+            + lstm_buy_and_hold_value,
+            "SP500 Benchmark": benchmark_df["Buy and Hold Portfolio Value"],
+        }
+    ).dropna()
+
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=final_df["Date"],
-            y=final_df["Portfolio Value"],
-            name="Portfolio Value",
+            x=value_df["Date"],
+            y=value_df["Strategy Cumulative Value"],
+            name="Strategy Cumulative Value",
         )
     )
     fig.add_trace(
         go.Scatter(
-            x=final_df["Date"],
-            y=final_df["Buy and Hold"],
-            name="Buy and Hold Value",
+            x=value_df["Date"],
+            y=value_df["Buy and Hold Cumulative Value"],
+            name="Buy and Hold Cumulative Value",
         )
     )
 
     fig.add_trace(
         go.Scatter(
-            x=final_df["Date"],
-            y=benchmark_df["Buy and Hold Portfolio Value"],
-            name="SP500 Benchmark",
+            x=value_df["Date"],
+            y=value_df["SP500 Benchmark"],
+            name="SP500 Buy and Hold Benchmark",
         )
     )
 
+    fig.update_layout(
+        title="Strategy Cumulative Value vs Benchmark",
+        xaxis_title="Date",
+        yaxis_title="Capital",
+    )
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+    return_df["Date"] = pd.to_datetime(return_df["Date"])
+    grouped_df = return_df.groupby(pd.Grouper(key="Date", freq="Y")).sum().reset_index()
+
+    st.markdown("## Annual Returns")
+    st.dataframe(grouped_df, use_container_width=True)
+
+    # st.write(return_df.drop("Date", axis=1).mean() * 252)
+
+    portfolio_mean = (
+        weights_d["META"] * grouped_df["SuperTrend Returns"].mean()
+        + weights_d["AAPL"] * grouped_df["SMA Returns"].mean()
+        + weights_d["NFLX"] * grouped_df["DC Returns"].mean()
+        + weights_d["AMZN"] * grouped_df["ML Returns"].mean()
+        + weights_d["GOOGL"] * grouped_df["LSTM Returns"].mean()
+    )
+
+    cov_matrix = grouped_df.drop("Date", axis=1).cov()
+
+    portfolio_variance = np.dot(
+        np.array(list(weights_d.values())).T,
+        np.dot(cov_matrix, np.array(list(weights_d.values()))),
+    )
+
+    portfolio_volatility = np.sqrt(portfolio_variance)
+
+    portfolio_sharpe = portfolio_mean / portfolio_volatility
+
+    st.write(portfolio_sharpe)
+
+    # st.dataframe(cov_matrix, use_container_width=True)
+    # st.dataframe(return_df, use_container_width=True)
