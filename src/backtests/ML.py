@@ -85,7 +85,7 @@ class MLClassifierVectorBacktester:
 
     def create_target(self, data):
         data["Future_Close"] = data["Close"].shift(-self.shift_days)
-        data["Target"] = (data["Future_Close"] > data["Close"]).astype(int)
+        data["Target"] = (data["Future_Close"] > data["Close"].shift(-1)).astype(int)
         return data
 
     def predictor_response_split(self, data):

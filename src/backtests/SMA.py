@@ -144,24 +144,17 @@ class SMAVectorBacktester:
         return df
 
     def calculate_realized_pnl(self, df):
-        """Calculate realized profit and loss."""
-        # Identify rows with sell signals that follow buy signals directly
         sell_signals = df["Signal"] == "Sell"
         buy_signals = df["Signal"] == "Buy"
         sell_following_buy = sell_signals & buy_signals.shift(1).fillna(False)
-
-        # Calculate P&L only on rows with a sell signal that follows a buy signal
         df.loc[sell_following_buy, "Realized PnL"] = df[
             "Total Strategy Portfolio Value"
         ] - df["Total Strategy Portfolio Value"].shift(1)
 
-        # Fill missing values with 0 or appropriate method
         df["Realized PnL"].fillna(0, inplace=True)
         return df
 
     def calculate_unrealized_pnl(self, df):
-        """Calculate unrealized profit and loss for open positions."""
-        # Initialize Unrealized PnL column
         df["Unrealized PnL"] = 0
 
         # Track the buy price for the latest open position
@@ -169,20 +162,15 @@ class SMAVectorBacktester:
 
         for i, row in df.iterrows():
             if row["Signal"] == "Buy":
-                # Update buy price per share when a new position is opened
                 buy_price_per_share = (
                     row["Close"] / self.no_of_shares if self.no_of_shares > 0 else None
                 )
             elif row["Signal"] == "Sell":
-                # Reset buy price per share when the position is closed
                 buy_price_per_share = None
 
             if row["In Position"] and buy_price_per_share is not None:
-                # Calculate current value of held shares
                 current_value_of_shares = row["No of Shares"] * row["Close"]
-                # Calculate cost of held shares
                 cost_of_held_shares = row["No of Shares"] * buy_price_per_share
-                # Update Unrealized PnL
                 df.at[i, "Unrealized PnL"] = (
                     current_value_of_shares - cost_of_held_shares
                 )
@@ -190,7 +178,6 @@ class SMAVectorBacktester:
         return df
 
     def calculate_drawdowns(self, df, capital_column):
-        """Calculates drawdown and max drawdown for a given capital column."""
         cumulative_max = df[capital_column].cummax()
         drawdown = (df[capital_column] - cumulative_max) / cumulative_max
         max_drawdown = drawdown.min()
