@@ -2,7 +2,7 @@ import numpy as np
 from portfolio_stats import PortfolioStatistics
 
 
-def monte_carlo_optimize_portfolio(price_df, symbols, num_iter=1000):
+def monte_carlo_optimize_portfolio(price_df, symbols, num_iter=5000):
     np.random.seed(42)
     sharpe_ratio_list = []
     portfolio_ret_list = []

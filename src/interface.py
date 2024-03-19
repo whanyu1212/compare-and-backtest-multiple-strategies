@@ -21,8 +21,17 @@ from util.utility_functions import (
     plot_portfolio_weights,
     plot_stock_price_prediction,
     plot_capital_change_vs_benchmark,
+    plot_value_strategy_vs_hold,
+    create_stacked_bar_chart,
 )
 from util.st_column_config import sma_column_config
+from util.performance_calculations import (
+    calculate_annualized_sharpe_ratio,
+    calculate_annualized_sortino_ratio,
+    calculate_annualized_treynor_ratio,
+    calculate_annualized_information_ratio,
+    calculate_annualized_calmar_ratio,
+)
 from backtests.SuperTrend import SuperTrendVectorBacktester
 from backtests.SMA import SMAVectorBacktester
 from backtests.DC import DonchianChannelVectorBacktester
@@ -100,6 +109,10 @@ benchmark_df = benchmark_extractor.data.drop(
     ["Dividends", "Stock Splits"], axis=1
 ).reset_index()
 
+benchmark_df["Market Returns"] = benchmark_df["Close"].pct_change()
+benchmark_df["Buy and Hold Portfolio Value"] = (
+    float(initial_capital) * (1 + benchmark_df["Market Returns"]).cumprod()
+)
 
 col1, col2, col3, col4, col5, col6 = st.columns([1.5, 1, 1, 1, 1, 1])
 
@@ -229,10 +242,12 @@ with tab2:
                 plot_drawdown_comparison(supertrend_df)
             with col2:
                 plot_capital_changes(supertrend_df, "skyblue", "dodgerblue")
-                weighted_benchmark = calculate_sp500_portfolio_value(
+                super_weighted_benchmark = calculate_sp500_portfolio_value(
                     benchmark_df, (float(initial_capital) * weights_d["META"])
                 )
-                plot_capital_change_vs_benchmark(supertrend_df, weighted_benchmark)
+                plot_capital_change_vs_benchmark(
+                    supertrend_df, super_weighted_benchmark
+                )
     else:
         st.info(
             "Please click on the Load Data button to start analyzing the selected stocks",
@@ -281,10 +296,10 @@ with tab3:
 
             with col2:
                 plot_capital_changes(sma_df, "skyblue", "dodgerblue")
-                weighted_benchmark = calculate_sp500_portfolio_value(
+                sma_weighted_benchmark = calculate_sp500_portfolio_value(
                     benchmark_df, (float(initial_capital) * weights_d["AAPL"])
                 )
-                plot_capital_change_vs_benchmark(sma_df, weighted_benchmark)
+                plot_capital_change_vs_benchmark(sma_df, sma_weighted_benchmark)
     else:
         st.info(
             "Please click on the Load Data button to start analyzing the selected stocks",
@@ -333,10 +348,10 @@ with tab4:
 
             with col2:
                 plot_capital_changes(dc_df, "skyblue", "dodgerblue")
-                weighted_benchmark = calculate_sp500_portfolio_value(
+                dc_weighted_benchmark = calculate_sp500_portfolio_value(
                     benchmark_df, (float(initial_capital) * weights_d["NFLX"])
                 )
-                plot_capital_change_vs_benchmark(dc_df, weighted_benchmark)
+                plot_capital_change_vs_benchmark(dc_df, dc_weighted_benchmark)
     else:
         st.info(
             "Please click on the Load Data button to start analyzing the selected stocks",
@@ -386,10 +401,10 @@ with tab5:
 
             with col2:
                 plot_capital_changes(ml_df, "skyblue", "dodgerblue")
-                weighted_benchmark = calculate_sp500_portfolio_value(
+                ml_weighted_benchmark = calculate_sp500_portfolio_value(
                     benchmark_df, (float(initial_capital) * weights_d["AMZN"])
                 )
-                plot_capital_change_vs_benchmark(ml_df, weighted_benchmark)
+                plot_capital_change_vs_benchmark(ml_df, ml_weighted_benchmark)
     else:
         st.info(
             "Please click on the Load Data button to start analyzing the selected stocks",
@@ -441,10 +456,10 @@ with tab6:
 
                 with col2:
                     plot_capital_changes(lstm_df, "skyblue", "dodgerblue")
-                    weighted_benchmark = calculate_sp500_portfolio_value(
+                    lstm_weighted_benchmark = calculate_sp500_portfolio_value(
                         benchmark_df, (float(initial_capital) * weights_d["GOOGL"])
                     )
-                plot_capital_change_vs_benchmark(lstm_df, weighted_benchmark)
+                    plot_capital_change_vs_benchmark(lstm_df, lstm_weighted_benchmark)
     else:
         st.info(
             "Please click on the Load Data button to start analyzing the selected stocks",
@@ -454,119 +469,220 @@ with tab6:
 with tab7:
     if button_clicked:
 
-        sma_returns = sma_df["Total Strategy Portfolio Value"].pct_change()
-        supertrend_returns = supertrend_df[
-            "Total Strategy Portfolio Value"
+        portfolio_value = {
+            "Date": supertrend_df["Date"],
+            "SuperTrend": supertrend_df["Total Strategy Portfolio Value"],
+            "SMA": sma_df["Total Strategy Portfolio Value"],
+            "DC": dc_df["Total Strategy Portfolio Value"],
+            "ML": ml_df["Total Strategy Portfolio Value"],
+            "LSTM": lstm_df["Total Strategy Portfolio Value"],
+            "Buy and Hold Cumulative Value": supertrend_df[
+                "Buy and Hold Portfolio Value"
+            ]
+            + sma_df["Buy and Hold Portfolio Value"]
+            + dc_df["Buy and Hold Portfolio Value"]
+            + ml_df["Buy and Hold Portfolio Value"]
+            + lstm_df["Buy and Hold Portfolio Value"],
+        }
+
+        portfolio_value_df = pd.DataFrame(portfolio_value)
+        portfolio_value_df.index = supertrend_df["Date"]
+        portfolio_value_df["Strategy Cumulative Value"] = (
+            portfolio_value_df["SuperTrend"]
+            + portfolio_value_df["SMA"]
+            + portfolio_value_df["DC"]
+            + portfolio_value_df["ML"]
+            + portfolio_value_df["LSTM"]
+        )
+
+        portfolio_value_df["Strategy Returns"] = portfolio_value_df[
+            "Strategy Cumulative Value"
         ].pct_change()
-        dc_returns = dc_df["Total Strategy Portfolio Value"].pct_change()
-        ml_returns = ml_df["Total Strategy Portfolio Value"].pct_change()
-        lstm_returns = lstm_df["Total Strategy Portfolio Value"].pct_change()
+        portfolio_value_df["Buy and Hold Returns"] = portfolio_value_df[
+            "Buy and Hold Cumulative Value"
+        ].pct_change()
+        portfolio_value_df["Strategy Cumulative Returns"] = (
+            1 + portfolio_value_df["Strategy Returns"]
+        ).cumprod()
+        portfolio_value_df["Buy and Hold Cumulative Returns"] = (
+            1 + portfolio_value_df["Buy and Hold Returns"]
+        ).cumprod()
 
-        return_df = pd.DataFrame(
-            {
-                "Date": sma_df["Date"],
-                "SuperTrend Returns": supertrend_returns,
-                "SMA Returns": sma_returns,
-                "DC Returns": dc_returns,
-                "ML Returns": ml_returns,
-                "LSTM Returns": lstm_returns,
-            }
-        ).dropna()
+        portfolio_value_df["Strategy Drawdown"] = (
+            portfolio_value_df["Strategy Cumulative Value"]
+            - portfolio_value_df["Strategy Cumulative Value"].cummax()
+        ) / portfolio_value_df["Strategy Cumulative Value"].cummax()
+        portfolio_value_df["Buy and Hold Drawdown"] = (
+            portfolio_value_df["Buy and Hold Cumulative Value"]
+            - portfolio_value_df["Buy and Hold Cumulative Value"].cummax()
+        ) / portfolio_value_df["Buy and Hold Cumulative Value"].cummax()
 
-        sma_value = sma_df["Total Strategy Portfolio Value"]
-        sma_buy_and_hold_value = sma_df["Buy and Hold Portfolio Value"]
-        supertrend_value = supertrend_df["Total Strategy Portfolio Value"]
-        supertrend_buy_and_hold_value = supertrend_df["Buy and Hold Portfolio Value"]
-        dc_value = dc_df["Total Strategy Portfolio Value"]
-        dc_buy_and_hold_value = dc_df["Buy and Hold Portfolio Value"]
-        ml_value = ml_df["Total Strategy Portfolio Value"]
-        ml_buy_and_hold_value = ml_df["Buy and Hold Portfolio Value"]
-        lstm_value = lstm_df["Total Strategy Portfolio Value"]
-        lstm_buy_and_hold_value = lstm_df["Buy and Hold Portfolio Value"]
+        strategy_max_drawdown = portfolio_value_df["Strategy Drawdown"].min()
+        buy_and_hold_max_drawdown = portfolio_value_df["Buy and Hold Drawdown"].min()
 
-        value_df = pd.DataFrame(
-            {
-                "Date": sma_df["Date"],
-                "SuperTrend Value": supertrend_value,
-                "SMA Value": sma_value,
-                "DC Value": dc_value,
-                "ML Value": ml_value,
-                "LSTM Value": lstm_value,
-                "Strategy Cumulative Value": supertrend_value
-                + sma_value
-                + dc_value
-                + ml_value
-                + lstm_value,
-                "Buy and Hold Cumulative Value": supertrend_buy_and_hold_value
-                + sma_buy_and_hold_value
-                + dc_buy_and_hold_value
-                + ml_buy_and_hold_value
-                + lstm_buy_and_hold_value,
-                "SP500 Benchmark": benchmark_df["Buy and Hold Portfolio Value"],
-            }
-        ).dropna()
+        portfolio_value_df.dropna(inplace=True)
 
-        fig = go.Figure()
-        fig.add_trace(
-            go.Scatter(
-                x=value_df["Date"],
-                y=value_df["Strategy Cumulative Value"],
-                name="Strategy Cumulative Value",
+        with st.expander("Key Statistics"):
+            col1, col2, col3, col4, col5, col6 = st.columns([1, 1, 1, 1, 1, 1])
+            portfolio_sharpe = calculate_annualized_sharpe_ratio(
+                portfolio_value_df["Strategy Returns"], 0
             )
-        )
-        fig.add_trace(
-            go.Scatter(
-                x=value_df["Date"],
-                y=value_df["Buy and Hold Cumulative Value"],
-                name="Buy and Hold Cumulative Value",
+            portfolio_sortino = calculate_annualized_sortino_ratio(
+                portfolio_value_df["Strategy Returns"], 0
             )
-        )
-
-        fig.add_trace(
-            go.Scatter(
-                x=value_df["Date"],
-                y=value_df["SP500 Benchmark"],
-                name="SP500 Buy and Hold Benchmark",
+            portfolio_treynor = calculate_annualized_treynor_ratio(
+                portfolio_value_df["Strategy Returns"],
+                portfolio_value_df["Buy and Hold Returns"],
+                0,
             )
-        )
+            portfolio_information = calculate_annualized_information_ratio(
+                portfolio_value_df["Strategy Returns"],
+                portfolio_value_df["Buy and Hold Returns"],
+            )
 
-        fig.update_layout(
-            title="Strategy Cumulative Value vs Benchmark",
-            xaxis_title="Date",
-            yaxis_title="Capital",
-        )
-        st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+            portfolio_calmar = calculate_annualized_calmar_ratio(
+                portfolio_value_df["Strategy Returns"],
+                strategy_max_drawdown,
+            )
+            create_container(col1, "Sharpe Ratio", round(portfolio_sharpe, 2))
+            create_container(col2, "Sortino Ratio", round(portfolio_sortino, 2))
+            create_container(col3, "Treynor Ratio", round(portfolio_treynor, 2))
+            create_container(col4, "Information Ratio", round(portfolio_information, 2))
+            create_container(
+                col5, "Strategy Max Drawdown", round(strategy_max_drawdown, 2)
+            )
+            create_container(col6, "Calmar Ratio", round(portfolio_calmar, 2))
 
-        return_df["Date"] = pd.to_datetime(return_df["Date"])
-        grouped_df = (
-            return_df.groupby(pd.Grouper(key="Date", freq="Y")).sum().reset_index()
-        )
+        with st.expander("Processed data"):
+            st.dataframe(portfolio_value_df, use_container_width=True, hide_index=True)
+        with st.expander("Key visuals"):
+            col1, col2 = st.columns([1, 1])
+            with col1:
 
-        st.markdown("## Annual Returns")
-        st.dataframe(grouped_df, use_container_width=True)
+                plot_value_strategy_vs_hold(portfolio_value_df)
+                plot_drawdown_comparison(portfolio_value_df)
+            with col2:
+                create_stacked_bar_chart(portfolio_value_df)
 
-        # st.write(return_df.drop("Date", axis=1).mean() * 252)
+                # Extract the year from the index
+                portfolio_value_df["Date"] = pd.to_datetime(portfolio_value_df["Date"])
+                portfolio_value_df["Year"] = portfolio_value_df["Date"].dt.year
 
-        portfolio_mean = (
-            weights_d["META"] * grouped_df["SuperTrend Returns"].mean()
-            + weights_d["AAPL"] * grouped_df["SMA Returns"].mean()
-            + weights_d["NFLX"] * grouped_df["DC Returns"].mean()
-            + weights_d["AMZN"] * grouped_df["ML Returns"].mean()
-            + weights_d["GOOGL"] * grouped_df["LSTM Returns"].mean()
-        )
+                # Initialize lists to store results
+                annualized_means_strategy, annualized_means_bnh = [], []
+                annualized_volatilities_strategy, annualized_volatilities_bnh = [], []
 
-        cov_matrix = grouped_df.drop("Date", axis=1).cov()
+                # Group by year
+                for year, group in portfolio_value_df.groupby("Year"):
+                    # Calculate mean daily return
+                    mean_strategy_daily_return = np.mean(group["Strategy Returns"])
+                    mean_bnh_daily_return = np.mean(group["Buy and Hold Returns"])
 
-        portfolio_variance = np.dot(
-            np.array(list(weights_d.values())).T,
-            np.dot(cov_matrix, np.array(list(weights_d.values()))),
-        )
+                    # Calculate standard deviation of daily return
+                    std_dev_strategy_daily_return = np.std(group["Strategy Returns"])
+                    std_dev_bnh_daily_return = np.std(group["Buy and Hold Returns"])
 
-        portfolio_volatility = np.sqrt(portfolio_variance)
+                    # Calculate annualized mean return
+                    annualized_mean_strategy_return = (
+                        1 + mean_strategy_daily_return
+                    ) ** 252 - 1
+                    annualized_mean_bnh_return = (1 + mean_bnh_daily_return) ** 252 - 1
 
-        portfolio_sharpe = portfolio_mean / portfolio_volatility
+                    # Calculate annualized standard deviation (volatility)
+                    annualized_volatility_strategy = (
+                        std_dev_strategy_daily_return * np.sqrt(252)
+                    )
+                    annualized_volatility_bnh = std_dev_bnh_daily_return * np.sqrt(252)
 
-        st.write(portfolio_sharpe)
+                    # Store results
+                    annualized_means_strategy.append(annualized_mean_strategy_return)
+                    annualized_means_bnh.append(annualized_mean_bnh_return)
+                    annualized_volatilities_strategy.append(
+                        annualized_volatility_strategy
+                    )
+                    annualized_volatilities_bnh.append(annualized_volatility_bnh)
+
+                # Create a new dataframe with the calculated values
+                df = pd.DataFrame(
+                    {
+                        "Year": portfolio_value_df["Year"].unique(),
+                        "Annualized Mean Strategy Return": annualized_means_strategy,
+                        "Annualized Mean BnH Return": annualized_means_bnh,
+                        "Annualized Volatility Strategy": annualized_volatilities_strategy,
+                        "Annualized Volatility BnH": annualized_volatilities_bnh,
+                    }
+                )
+
+                # Create a dual y-axis plot
+                fig = go.Figure()
+
+                # Add traces for annualized mean returns
+                fig.add_trace(
+                    go.Bar(
+                        x=df["Year"],
+                        y=df["Annualized Mean Strategy Return"],
+                        name="Annualized Mean Strategy Return",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["Year"],
+                        y=df["Annualized Mean BnH Return"],
+                        name="Annualized Mean BnH Return",
+                    )
+                )
+
+                # Create a second y-axis
+                fig.update_layout(yaxis2=dict(overlaying="y", side="right"))
+
+                # Add traces for annualized volatilities
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["Year"],
+                        y=df["Annualized Volatility Strategy"],
+                        name="Annualized Volatility Strategy",
+                        yaxis="y2",
+                    )
+                )
+                fig.add_trace(
+                    go.Scatter(
+                        x=df["Year"],
+                        y=df["Annualized Volatility BnH"],
+                        name="Annualized Volatility BnH",
+                        yaxis="y2",
+                    )
+                )
+
+                fig.update_layout(
+                    title="Annualized Mean Returns and Volatilities",
+                    xaxis_title="Year",
+                    yaxis_title="Annualized Mean Return",
+                    yaxis2_title="Annualized Volatility",
+                )
+
+                # Display the figure
+                st.plotly_chart(fig, use_container_width=True)
+
+        # portfolio_mean = (
+        #     weights_d["META"] * grouped_df["SuperTrend Returns"].mean()
+        #     + weights_d["AAPL"] * grouped_df["SMA Returns"].mean()
+        #     + weights_d["NFLX"] * grouped_df["DC Returns"].mean()
+        #     + weights_d["AMZN"] * grouped_df["ML Returns"].mean()
+        #     + weights_d["GOOGL"] * grouped_df["LSTM Returns"].mean()
+        # )
+
+        # cov_matrix = grouped_df.drop("Date", axis=1).cov()
+
+        # portfolio_variance = np.dot(
+        #     np.array(list(weights_d.values())).T,
+        #     np.dot(cov_matrix, np.array(list(weights_d.values()))),
+        # )
+
+        # portfolio_volatility = np.sqrt(portfolio_variance)
+
+        # portfolio_sharpe = portfolio_mean / portfolio_volatility
+
+        # st.write(portfolio_sharpe)
 
         # st.dataframe(cov_matrix, use_container_width=True)
         # st.dataframe(return_df, use_container_width=True)

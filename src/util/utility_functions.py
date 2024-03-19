@@ -351,7 +351,7 @@ def plot_stock_price_prediction(y_train, y_pred):
         fig.add_trace(create_trace(*trace))
 
     fig.update_layout(
-        title="NTLX Stock Price Prediction",
+        title="GOOGL Stock Price Prediction",
         xaxis_title="Days",
         yaxis_title="Stock Price",
     )
@@ -471,4 +471,108 @@ def plot_capital_change_vs_benchmark(strategy_df, benchmark_df):
         xaxis_title="Date",
         yaxis_title="Capital",
     )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_value_strategy_vs_hold(value_df):
+    fig = go.Figure()
+    fig.add_trace(
+        create_trace(
+            value_df["Date"],
+            value_df["Strategy Cumulative Value"],
+            "lines",
+            "Strategy Cumulative Value",
+        )
+    )
+    fig.add_trace(
+        create_trace(
+            value_df["Date"],
+            value_df["Buy and Hold Cumulative Value"],
+            "lines",
+            "Buy and Hold Cumulative Value",
+        )
+    )
+
+    fig.update_layout(
+        title="Strategy Cumulative Value vs Buy and Hold Cumulative Value",
+        xaxis_title="Date",
+        yaxis_title="Capital",
+    )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_return_strategy_vs_hold(value_df):
+    fig = go.Figure()
+    fig.add_trace(
+        create_trace(
+            value_df["Date"],
+            value_df["Strategy Cumulative Returns"],
+            "lines",
+            "Strategy Cumulative Returns",
+        )
+    )
+    fig.add_trace(
+        create_trace(
+            value_df["Date"],
+            value_df["Buy and Hold Cumulative Returns"],
+            "lines",
+            "lines" "Buy and Hold Cumulative Returns",
+        )
+    )
+
+    fig.update_layout(
+        title="Strategy Cumulative Return vs Buy and Hold Cumulative Return",
+        xaxis_title="Date",
+        yaxis_title="Return",
+    )
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def create_stacked_bar_chart(portfolio_value):
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                name="SuperTrend",
+                x=portfolio_value["Date"],
+                y=portfolio_value["SuperTrend"],
+            ),
+            go.Bar(name="SMA", x=portfolio_value["Date"], y=portfolio_value["SMA"]),
+            go.Bar(name="DC", x=portfolio_value["Date"], y=portfolio_value["DC"]),
+            go.Bar(name="ML", x=portfolio_value["Date"], y=portfolio_value["ML"]),
+            go.Bar(name="LSTM", x=portfolio_value["Date"], y=portfolio_value["LSTM"]),
+        ]
+    )
+
+    # Change the bar mode
+    fig.update_layout(barmode="stack", title="Return breakdown by strategy")
+
+    # Display the figure
+    st.plotly_chart(fig, use_container_width=True, theme="streamlit")
+
+
+def plot_profit_loss_distribution(portfolio_value_df):
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Histogram(
+            x=portfolio_value_df["Strategy Returns"],
+            name="Strategy Returns",
+            opacity=0.75,
+        )
+    )
+    fig.add_trace(
+        go.Histogram(
+            x=portfolio_value_df["Buy and Hold Returns"],
+            name="Buy and Hold Returns",
+            opacity=0.75,
+        )
+    )
+
+    fig.update_layout(
+        barmode="overlay",
+        title_text="Profit/Loss Distribution",
+        xaxis_title_text="Returns",
+        yaxis_title_text="Frequency",
+    )
+
     st.plotly_chart(fig, use_container_width=True, theme="streamlit")
